@@ -1,6 +1,8 @@
-# Moica Revocation SMT
+# Moica Revocation LeanIMT+
 
-Pipeline that fetches Taiwan MOICA Certificate Revocation Lists (CRLs), builds a Sparse Merkle Tree (SMT) from revoked serial numbers, serves ZK-friendly membership/non-membership proofs via REST and gRPC, and posts roots on-chain.
+Pipeline that fetches Taiwan MOICA Certificate Revocation Lists (CRLs), builds a [**LeanIMT+**](https://github.com/vplasencia/leanimt-plus) (indexed Merkle tree with native non-membership proofs) from revoked serial numbers, serves ZK-friendly membership/non-membership proofs via REST and gRPC, and posts roots on-chain.
+
+Forked from `moica-revocation-smt`; the original SMT has been replaced with LeanIMT+ over Poseidon-P256.
 
 ## Architecture
 
@@ -10,12 +12,12 @@ MOICA CRL (DER)
   CRL Fetcher/Parser (internal/crl)
        │
        ▼
-  TreeManager (internal/manager) ── per-issuer SMTs (g2, g3)
+  TreeManager (internal/manager) ── per-issuer LeanIMT+ (g2, g3)
        │                                    │
        ▼                                    ▼
   REST API (chi)  +  gRPC API         Chain Relayer
   GET /proof/{issuerId}/{sn}          posts root on-chain
-  GET /status                         via SMTRootStorage.sol
+  GET /status                         via LeanIMTPlusRootStorage.sol
 ```
 
 ## Quick Start
@@ -25,75 +27,71 @@ cd server
 make build    # → bin/smtserver
 make run      # starts REST + gRPC servers
 
-# or run tests
+# tests
 make test
 
-# integration tests (API E2E ~10s + live CRL fetch ~30min)
+# integration tests (synthetic tree E2E ~1s + live CRL fetch ~30 min)
 make test-integration
 ```
 
 ## Snapshots
 
-Pre-built SMT snapshots are published as GitHub Release assets (`snapshot-latest` tag), updated twice daily.
+Pre-built LeanIMT+ snapshots are published as GitHub Release assets (`snapshot-latest` tag), updated twice daily.
 
 When the server starts, it automatically:
 1. Loads local snapshots from `$DATA_DIR/{issuerID}/tree-snapshot.json.gz`
 2. Falls back to downloading from the GitHub release
 3. Falls back to rebuilding from live CRL data (slow, ~30 min)
 
-To manually download snapshots:
-```bash
-# Download latest snapshots
-cd server
-mkdir -p data/g2 data/g3
-curl -L -o data/g2/tree-snapshot.json.gz \
-  https://github.com/moven0831/moica-revocation-smt/releases/download/snapshot-latest/g2-tree-snapshot.json.gz
-curl -L -o data/g3/tree-snapshot.json.gz \
-  https://github.com/moven0831/moica-revocation-smt/releases/download/snapshot-latest/g3-tree-snapshot.json.gz
-```
-
 Snapshots are available in two formats:
-- **JSON** (`.json.gz`) — compatible with `@zk-kit/smt` v1.0.2, used by the server
+- **JSON** (`.json.gz`) — gzipped v2 schema (see below); the server's load format
 - **Binary** (`.bin.gz` / `.bin`) — compact format for client-side WASM loading (see [Client-Side WASM](#client-side-wasm))
 
-The latest Merkle roots for each issuer are displayed in the [snapshot-latest release notes](https://github.com/moven0831/moica-revocation-smt/releases/tag/snapshot-latest). Since the SMT is deterministic, anyone can independently verify a root by rebuilding from the same CRL data.
+The latest Merkle roots, tree depths, and sizes per issuer are displayed in the [snapshot-latest release notes](https://github.com/moven0831/moica-revocation-smt/releases/tag/snapshot-latest). LeanIMT+ is deterministic given a sorted insertion order, so anyone can independently rebuild and verify a root from the same CRL data.
+
+> **Note:** the v2 snapshot schema is incompatible with the original SMT v1 snapshots. The first cron run after this branch ships will overwrite `data/g2/` and `data/g3/` with v2 artifacts. Local devs should `rm -rf server/data` before running.
 
 ## API
 
 ### Usage Examples
 
 ```bash
-# Check server status
+# Server status (per-issuer size, depth, root, CRL number)
 curl localhost:3000/status
 
-# Query a revoked certificate (membership proof)
+# Membership proof for a revoked serial
 curl localhost:3000/proof/g2/100048210dd2df2e128096a9282b5ec5
 
-# Query a non-revoked certificate (non-membership proof)
+# Non-membership proof for an unrevoked serial
 curl localhost:3000/proof/g2/00000000000000000000000000000001
 ```
 
 ### `GET /proof/{issuerId}/{sn}`
 
-Returns a membership or non-membership proof. Serial number accepts hex with or without `0x` prefix (max 32 hex chars).
+Returns a membership (`proofType: 0`) or non-membership (`proofType: 1`) proof. Serial number accepts hex with or without `0x` prefix (max 32 hex chars).
 
 ```json
 {
   "issuerId": "g2",
   "serialNumber": "0x100048210dd2df2e128096a9282b5ec5",
-  "entry": ["0x...", "0x...", "0x1"],
-  "matchingEntry": ["0x...", "0x...", "0x1"],
-  "siblings": ["0x...", "0x...", "..."],
+  "proofType": 1,
   "root": "0x3c2151...",
-  "membership": false,
-  "depth": 128
+  "value": "0x100048210dd2df2e128096a9282b5ec5",
+  "leaf": {
+    "value": "0x0fff48...",
+    "nextValue": "0x100050..."
+  },
+  "leafIndex": 11357,
+  "siblings": ["0x...", "0x...", "..."]
 }
 ```
 
-- `entry` — `[key, value, 1]` for the queried serial
-- `matchingEntry` — present only for non-membership proofs
-- `siblings` — up to 128 sibling hashes (varies by proof)
-- All BigInt values are 0x-prefixed hex strings
+- `proofType` — `0` for membership, `1` for non-membership
+- For membership: `leaf.value == value`
+- For non-membership: `leaf.value < value < leaf.nextValue` (or `leaf.nextValue == 0` if the low leaf is the tail)
+- `leafIndex` packs the path bits LSB-first; bit `i` selects the direction of `siblings[i]` during root reconstruction
+- `siblings` length equals the number of levels with a real sibling; LeanIMT+ skips unpaired-right levels so the array is typically shorter than the nominal tree depth
+- All BigInt values are `0x`-prefixed hex strings
 
 ### `GET /status`
 
@@ -102,7 +100,9 @@ Returns a membership or non-membership proof. Serial number accepts hex with or 
   "generations": {
     "g2": {
       "loaded": true,
-      "count": 412404,
+      "size": 412404,
+      "leafCount": 412405,
+      "depth": 19,
       "root": "0x3c2151...",
       "crlNumber": 2026031610,
       "loadedAt": "2026-03-16T08:00:00Z"
@@ -112,37 +112,46 @@ Returns a membership or non-membership proof. Serial number accepts hex with or 
 }
 ```
 
+`size` is the number of user-inserted leaves (revoked serials). `leafCount` is `size + 1` because LeanIMT+ prepends a sentinel `{value: 0, nextValue: smallest}` at index 0. `depth = ceil(log2(leafCount))`.
+
 ### gRPC
 
-Service `RevocationProofService` on port 50051 with `GetProof` and `GetStatus` RPCs. See `server/pkg/proto/revocation/revocation.proto`.
+Service `RevocationProofService` on port 50051 with `GetProof` and `GetStatus` RPCs. See `server/pkg/proto/revocation/revocation.proto`. The gRPC response mirrors the REST shape (proofType / root / value / leaf{value,nextValue} / leafIndex / siblings).
 
 ## Contract
 
-**SMTRootStorage.sol** — on-chain registry for SMT roots.
+**LeanIMTPlusRootStorage.sol** — on-chain registry for LeanIMT+ roots with tree metadata.
 
-**Deployed on Arbitrum Sepolia:** [`0xc461326eb6e46F10A276B0F14BFFf8b256A43FFA`](https://sepolia.arbiscan.io/address/0xc461326eb6e46F10A276B0F14BFFf8b256A43FFA)
-
-The contract stores SMT Merkle roots on-chain so anyone can verify certificate revocation status against a trusted root. A CI relayer updates roots twice daily after rebuilding from MOICA CRL data. Each root is tied to a monotonically increasing CRL number to prevent stale updates. Anyone can call `getRoot(issuerId)` to read the latest root and verify proofs off-chain.
+The contract stores roots alongside their `depth` and `leafCount` so external verifiers know the expected proof shape for a given root. A CI relayer updates entries twice daily after rebuilding from MOICA CRL data. Each entry is gated on a monotonically increasing CRL number to prevent stale or reorder attacks.
 
 | Function | Description |
 |----------|-------------|
-| `setRoot(bytes32 issuerId, uint256 newRoot, uint256 crlNumber)` | Update root (relayer only, monotonic CRL number) |
+| `setRoot(bytes32 issuerId, uint256 newRoot, uint256 crlNumber, uint8 depth, uint64 leafCount)` | Update root (relayer only, monotonic CRL number) |
 | `getRoot(bytes32 issuerId) → uint256` | Read current root |
+| `getRootInfo(bytes32 issuerId) → (root, crlNumber, updatedAt, depth, leafCount)` | Read full RootInfo |
 
-Issuer IDs: `keccak256("MOICA-G2")`, `keccak256("MOICA-G3")`
+Event:
+
+```solidity
+event RootUpdated(bytes32 indexed issuerId, uint256 root, uint256 crlNumber, uint8 depth, uint64 leafCount);
+```
+
+Issuer IDs: `keccak256("MOICA-G2")`, `keccak256("MOICA-G3")`.
+
+> **Breaking change** vs the original `SMTRootStorage`: the event signature and `setRoot` calldata gained `depth` and `leafCount`. Any off-chain indexer keyed on the old topic-0 hash will need to re-index.
 
 Deploy to Arbitrum Sepolia:
 
 1. Generate relayer keypair: `cast wallet new`
-2. Fund relayer address with Arbitrum Sepolia ETH
+2. Fund relayer with Arbitrum Sepolia ETH
 3. Deploy:
 ```bash
 cd onchain-contract
 nvm use 22
 pnpm install
-npx hardhat ignition deploy ignition/modules/SMTRootStorage.ts \
+npx hardhat ignition deploy ignition/modules/LeanIMTPlusRootStorage.ts \
   --network arbitrumSepolia \
-  --parameters '{"SMTRootStorageModule": {"relayer": "0x<RELAYER_ADDRESS>"}}'
+  --parameters '{"LeanIMTPlusRootStorageModule": {"relayer": "0x<RELAYER_ADDRESS>"}}'
 ```
 4. Set GitHub Actions secrets: `RPC_URL`, `RELAYER_PRIVATE_KEY` (hex, no `0x`), `CONTRACT_ADDRESS`
 
@@ -151,8 +160,6 @@ Post roots on-chain manually (reads `root.json` files, skips gracefully if env v
 cd server
 ./bin/smtbuild --post-root
 ```
-
-See [onchain-contract/README.md](onchain-contract/README.md) for detailed setup instructions.
 
 ## Environment Variables
 
@@ -166,12 +173,12 @@ See [onchain-contract/README.md](onchain-contract/README.md) for detailed setup 
 | `CRL_POLL_INTERVAL` | 21600 (6h) | CRL polling interval in seconds |
 | `RPC_URL` | — | Ethereum JSON-RPC URL |
 | `RELAYER_PRIVATE_KEY` | — | Hex private key for chain relayer |
-| `CONTRACT_ADDRESS` | — | SMTRootStorage contract address |
+| `CONTRACT_ADDRESS` | — | `LeanIMTPlusRootStorage` contract address |
 | `GITHUB_REPO` | `moven0831/moica-revocation-smt` | GitHub repo for snapshot releases |
 
 ## Client-Side WASM
 
-A Go WASM module (`smt.wasm`, ~3.3MB) enables loading the full SMT and generating proofs entirely in the browser — no server round-trip needed.
+A Go WASM module (`smt.wasm`) enables loading the full LeanIMT+ tree and generating proofs entirely in the browser — no server round-trip needed.
 
 ### WASM API
 
@@ -181,110 +188,72 @@ The WASM module exposes these functions on `globalThis`:
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `smtInitTree` | `(nodeCount, depth)` | Pre-allocate tree structure |
-| `smtAddNodeChunk` | `(Uint8Array)` → `number` | Stream binary nodes in chunks, returns count parsed |
-| `smtFinalize` | `(rootHex, leafCount)` | Set root and finalize tree for proof generation |
-| `smtCreateProof` | `(keyHex)` → `string` | Generate proof, returns JSON with `root`, `entry`, `matchingEntry`, `siblings` |
-| `smtVerifyProof` | `(proofJSON)` → `boolean` | Verify a proof |
-| `smtGetMemStats` | `()` → `string` | Go runtime memory stats as JSON |
+| `leanimtLoadSnapshot` | `(Uint8Array)` → `{size, depth, leafCount}` | Load a decompressed v2 binary snapshot in one call |
+| `leanimtGenerateProof` | `(valueHex)` → `string` | Generate proof JSON for the given value |
+| `leanimtVerifyProof` | `(proofJSON)` → `boolean` | Verify a proof |
+| `leanimtRoot` | `()` → `string` | Current tree root (hex) |
+| `leanimtGetMemStats` | `()` → `string` | Go runtime memory stats as JSON |
 
-Proof output format: all values are bare hex (no `0x` prefix), matching the server's REST API structure.
+The proof JSON matches the REST `ProofResponse` shape (`proofType`, `root`, `value`, `leaf`, `leafIndex`, `siblings`).
 
-### Binary Snapshot Format
+### Binary Snapshot Format (v2)
 
-The binary format is a compact representation of the SMT node tree, designed for efficient chunked streaming to WASM.
-
-**Header** (52 bytes, big-endian):
+**Header** (50 bytes, big-endian):
 ```
-[0:2]   magic       uint16  0x534D ("SM")
-[2:4]   version     uint16  1
-[4:8]   nodeCount   uint32
-[8:40]  rootHash    [32]byte
-[40:44] depth       uint32
-[44:52] crlNumber   uint64
+[0:2]   magic       uint16  0x4C49 ("LI")
+[2:4]   version     uint16  2
+[4:6]   depth       uint16
+[6:10]  leafCount   uint32
+[10:18] crlNumber   uint64
+[18:50] root        [32]byte
 ```
 
-**Per node** (variable size):
+**Per level** (one for each of `depth+1` levels):
 ```
-[0:1]   type    uint8   (0=branch, 1=leaf)
-[1:33]  hash    [32]byte
-Branch: [33:65] left [32]byte, [65:97] right [32]byte    (97 bytes total)
-Leaf:   [33:65] key [32]byte, [65:97] value [32]byte, [97:129] entryMark [32]byte    (129 bytes total)
+count  uint32                             — number of entries at this level
+[count repetitions of]
+  present uint8                           — 0 if hash is absent (nil-promoted), 1 otherwise
+  hash    [32]byte                        — Poseidon-P256 field element (big-endian)
+```
+
+**Per leaf** (one for each of `leafCount` records, including the sentinel at index 0):
+```
+value     [32]byte
+nextValue [32]byte
 ```
 
 Build binary snapshots: `cd server && make build-binary` or `./bin/smtbuild --binary`
 
 Convert existing JSON snapshot: `./bin/smtbuild --convert-binary data/g2/tree-snapshot.json.gz`
 
-### Client Integration Guide
-
-Web or mobile clients can use the published release artifacts to load an SMT and generate proofs locally:
-
-1. **Load runtime** — include `wasm_exec.js` (Go's JS glue), instantiate `smt.wasm` via `WebAssembly.instantiateStreaming`
-2. **Fetch snapshot** — download `g2-tree-snapshot.bin.gz` and decompress (browser: `DecompressionStream`, native: `gzip` library)
-3. **Build tree** — parse 52-byte binary header → `smtInitTree(nodeCount, depth)` → stream nodes via `smtAddNodeChunk(chunk)` in batches of ~10,000 → `smtFinalize(rootHex, leafCount)`
-4. **Generate proof** — `smtCreateProof(serialNumberHex)` → parse JSON → convert hex to decimal strings → pad siblings to depth 128
-5. **Feed to circuit** — proof fields (`smtRoot`, `smtSiblings[128]`, `smtOldKey`, `smtOldValue`, `smtIsOld0`) become inputs for `SMTNonMembershipVerifier(128)` in the [zkID](https://github.com/zkmopro/zkID) circom circuit
-
-### Release Assets
-
-The `snapshot-latest` release (updated twice daily) includes:
-
-| Asset | Size | Description |
-|-------|------|-------------|
-| `smt.wasm` | ~3.3MB | Go WASM module |
-| `wasm_exec.js` | ~17KB | Go WASM runtime support |
-| `g2-tree-snapshot.bin.gz` | ~71MB | Binary snapshot (gzip-compressed) |
-| `g2-tree-snapshot.json.gz` | ~76MB | JSON snapshot (server) |
-
-### Performance (Benchmark)
-
-| Metric | Desktop (M3, Chrome) | iPhone (Safari) | Android (Chrome) |
-|--------|---------------------|-----------------|------------------|
-| Download | 6ms (localhost) | 103ms | 157ms |
-| Decompress (.bin.gz) | 296ms | 14.4s | 14.9s |
-| Tree load | 2.85s | 1.74s | 5.86s |
-| Proof generation | <1ms | 1ms | 3ms |
-| WASM heap | 442MB | 424MB | 424MB |
-| **Total** | **3.2s** | **16.3s** | **21.1s** |
-
-Run the benchmark locally: `cd server && make benchmark` → opens `http://localhost:8080/benchmark.html`
-
-### Mobile Integration Path
-
-The same binary snapshot and proof format work across platforms:
-
-- **Web** — Go WASM (`smt.wasm`) loaded via `wasm_exec.js` + `WebAssembly.instantiateStreaming`
-- **Mobile (iOS/Android)** — Go mobile bindings via `gomobile bind` (`.xcframework` for Swift, `.aar` for Kotlin) using the same binary format
-- **Proof conversion** — hex-to-decimal + sibling padding is ~50 lines of platform-agnostic logic, easily ported to any language
-- **Circuit** — same `SMTNonMembershipVerifier(128)` circom circuit, same witness format; [mopro](https://github.com/zkmopro/mopro) handles mobile proving
-
 ## CI/CD
 
 **`ci.yml`** — runs on push/PR to main:
 - Go server: `go test ./...` + build binary
 - WASM: verify `smt.wasm` compiles (`GOOS=js GOARCH=wasm`)
-- E2E integration: downloads real G2 snapshot (~412k entries), verifies proofs via REST + gRPC
+- E2E integration: synthetic tree (1024 leaves) — exercises REST + gRPC + proof verification end-to-end without network
 - Contracts: `npx hardhat test` (Node 22)
 
 **`update-smt.yml`** — runs twice daily at 12:00/00:00 UTC+8 (04:00/16:00 UTC):
 1. Build server binary + WASM module
-2. Fetch CRL, build SMT, export JSON + binary snapshots (skipped if merkle root is unchanged)
+2. Fetch CRL, build LeanIMT+, export JSON + binary snapshots (skipped if root unchanged)
 3. Upload snapshots, WASM module, and `wasm_exec.js` to GitHub Release (`snapshot-latest`)
 4. Post root on-chain via `smtbuild --post-root` (Arbitrum Sepolia)
 
-Required secrets: `RPC_URL`, `RELAYER_PRIVATE_KEY`, `CONTRACT_ADDRESS` (on-chain posting skips gracefully if unset)
+Required secrets: `RPC_URL`, `RELAYER_PRIVATE_KEY`, `CONTRACT_ADDRESS` (on-chain posting skips gracefully if unset).
 
-## SMT Compatibility
+> **Migration coordination**: deploy the new `LeanIMTPlusRootStorage` contract and update `CONTRACT_ADDRESS` *before* enabling the post-root step. The new ABI is incompatible with the old `SMTRootStorage`, so `setRoot` will revert against an old contract.
 
-Wire-compatible with `@zk-kit/smt` v1.0.2 (`bigNumbers` mode):
+## LeanIMT+ Implementation Notes
 
-- **Hash:** Poseidon over P-256 base field via `go-poseidon-p256`
-- **Tree depth:** 128 (sufficient for MOICA 64–128 bit serial numbers; halves proof size vs 256)
-- **Path encoding:** LSB-first (`big.Int.Bit(i)` for i in 0..127)
-- **Leaf node:** `Hash3(key, value, 1)` — the `1` is the entry mark
-- **Branch node:** `Hash2(left, right)`
-- **Proof:** entry `[key, value, 1]` + up to 128 siblings; non-membership includes optional matching entry
+- **Reference**: [vplasencia/leanimt-plus](https://github.com/vplasencia/leanimt-plus). Go port lives in `server/internal/leanimt/`.
+- **Hash**: Poseidon over P-256 base field via `go-poseidon-p256` (unchanged from the SMT predecessor). The upstream LeanIMT+ uses Poseidon-BN254 — our proofs are NOT interoperable with the upstream Circom verifier; we ported the *algorithm*, not the field.
+- **Leaf commitment**: `H(value, nextValue)`. Leaves form an implicit sorted linked list keyed by `value`.
+- **Branch**: `H(left, right)`. Unpaired right children are promoted unchanged (no zero-padding).
+- **Sentinel**: first insert creates `{value: 0, nextValue: smallest}` at index 0. The sentinel is never reported by `IndexOf` and `0` is rejected as an insertable value.
+- **Depth**: dynamic, `ceil(log2(leafCount))`.
+- **Insert order**: production paths (`smtbuild`, CRL Watcher) pre-sort serials and use `InsertManySorted` for O(n) total inserts. The naive `InsertMany` is O(n²) and only used in tests.
+- **Deletion**: not supported. The CRL Watcher rebuilds the tree from scratch every poll, so deletions are unnecessary.
 
 ## Data Scale
 
@@ -293,9 +262,12 @@ Wire-compatible with `@zk-kit/smt` v1.0.2 (`bigNumbers` mode):
 | G2  | ~412,000     | ~20MB DER |
 | G3  | ~103,000     | ~5MB DER  |
 
+For 412k G2 entries, LeanIMT+ depth is `ceil(log2(412k+1)) = 19`. Membership proofs typically carry ≤ 19 siblings.
+
 ## References
 
+- [LeanIMT+](https://github.com/vplasencia/leanimt-plus) — TypeScript reference implementation
+- [LeanIMT paper](https://zkkit.org/leanimt-paper.pdf) — base construction
+- [Indexed Merkle Tree paper](https://eprint.iacr.org/2021/1263.pdf) — indexed-leaf idea
 - [MOICA](https://moica.nat.gov.tw/) — Taiwan citizen digital certificate
 - [Poseidon Hash](https://www.poseidon-hash.info/) — ZK-friendly hash function
-- [Hadeshash spec](https://eprint.iacr.org/2019/458.pdf) — Round number parameters
-- [zkID](https://github.com/zkmopro/zkID) — ZK identity verification project
