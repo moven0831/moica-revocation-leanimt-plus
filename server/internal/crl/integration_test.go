@@ -4,10 +4,11 @@ package crl
 
 import (
 	"math/big"
+	"sort"
 	"testing"
 	"time"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
+	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
 )
 
 const (
@@ -26,7 +27,6 @@ func TestIntegrationG3CRL(t *testing.T) {
 func testCRLIntegration(t *testing.T, name, url string, minSerials int) {
 	t.Helper()
 
-	// Step 1: Fetch CRL
 	t.Logf("[%s] Fetching CRL from %s", name, url)
 	fetchStart := time.Now()
 	derBytes, err := FetchDER(url)
@@ -35,7 +35,6 @@ func testCRLIntegration(t *testing.T, name, url string, minSerials int) {
 	}
 	t.Logf("[%s] Fetched %d bytes in %v", name, len(derBytes), time.Since(fetchStart))
 
-	// Step 2: Parse CRL
 	parseStart := time.Now()
 	parsed, err := ParseDER(derBytes)
 	if err != nil {
@@ -51,70 +50,69 @@ func testCRLIntegration(t *testing.T, name, url string, minSerials int) {
 		t.Fatalf("[%s] Expected at least %d serials, got %d", name, minSerials, len(parsed.RevokedSerials))
 	}
 
-	// Step 3: Deduplicate serials
 	seen := make(map[string]struct{}, len(parsed.RevokedSerials))
 	uniqueSerials := make([]*big.Int, 0, len(parsed.RevokedSerials))
 	for _, s := range parsed.RevokedSerials {
 		key := s.Text(16)
 		if _, dup := seen[key]; !dup {
 			seen[key] = struct{}{}
-			uniqueSerials = append(uniqueSerials, s)
+			uniqueSerials = append(uniqueSerials, new(big.Int).Set(s))
 		}
 	}
-	t.Logf("[%s] %d unique serials (removed %d duplicates)",
+	sort.Slice(uniqueSerials, func(i, j int) bool { return uniqueSerials[i].Cmp(uniqueSerials[j]) < 0 })
+	t.Logf("[%s] %d unique sorted serials (removed %d duplicates)",
 		name, len(uniqueSerials), len(parsed.RevokedSerials)-len(uniqueSerials))
 
-	// Step 4: Build SMT (depth 128 is sufficient for CRL serial numbers)
-	const treeDepth = 128
-	hasher := smt.NewPoseidonHasher()
-	tree := smt.NewWithDepth(hasher, treeDepth)
-	entryVal := big.NewInt(1)
+	hasher := leanimt.NewPoseidonHasher()
+	tree := leanimt.New(hasher)
 
 	buildStart := time.Now()
-	batchSize := 10_000
-	err = tree.BatchAddWithProgress(uniqueSerials, entryVal, batchSize, func(done, total int) {
-		t.Logf("[%s] Added %d / %d entries", name, done, total)
+	err = tree.InsertManyWithProgress(uniqueSerials, 10_000, func(done, total int) {
+		t.Logf("[%s] Inserted %d / %d entries", name, done, total)
 	})
 	if err != nil {
-		t.Fatalf("[%s] BatchAdd failed: %v", name, err)
+		t.Fatalf("[%s] InsertManySorted failed: %v", name, err)
 	}
 	buildDuration := time.Since(buildStart)
-	t.Logf("[%s] SMT built: count=%d, root=0x%s, duration=%v",
-		name, tree.Count, tree.Root.Text(16), buildDuration)
+	root := tree.Root()
+	t.Logf("[%s] LeanIMT+ built: size=%d depth=%d root=0x%s duration=%v",
+		name, tree.Size(), tree.Depth(), root.Text(16), buildDuration)
 
-	if tree.Count < minSerials {
-		t.Fatalf("[%s] Expected tree count >= %d, got %d", name, minSerials, tree.Count)
+	if tree.Size() < minSerials {
+		t.Fatalf("[%s] Expected tree size >= %d, got %d", name, minSerials, tree.Size())
 	}
-	if tree.Root.Sign() == 0 {
-		t.Fatalf("[%s] Root is zero after adding entries", name)
+	if root == nil || root.Sign() == 0 {
+		t.Fatalf("[%s] Root is nil/zero after build", name)
 	}
 
-	// Step 5: Membership proof (first serial)
 	memberKey := uniqueSerials[0]
 	proofStart := time.Now()
-	memberProof := tree.CreateProof(memberKey)
+	memberProof, err := tree.GenerateProof(memberKey)
+	if err != nil {
+		t.Fatalf("[%s] GenerateProof failed: %v", name, err)
+	}
 	t.Logf("[%s] Membership proof generated in %v", name, time.Since(proofStart))
 
-	if !memberProof.Membership {
-		t.Fatalf("[%s] Expected membership=true for serial 0x%s", name, memberKey.Text(16))
+	if memberProof.ProofType != leanimt.ProofMembership {
+		t.Fatalf("[%s] Expected membership proof for 0x%s, got %d",
+			name, memberKey.Text(16), memberProof.ProofType)
 	}
-	if !smt.VerifyProof(hasher, memberProof, treeDepth) {
-		t.Fatalf("[%s] Membership proof verification failed for serial 0x%s", name, memberKey.Text(16))
+	if !leanimt.VerifyProof(hasher, memberProof) {
+		t.Fatalf("[%s] Membership proof verification failed for 0x%s", name, memberKey.Text(16))
 	}
-	t.Logf("[%s] Membership proof verified for serial 0x%s", name, memberKey.Text(16))
 
-	// Step 6: Non-membership proof (key unlikely to be a real serial)
 	nonMemberKey := big.NewInt(9999)
-	nonMemberProof := tree.CreateProof(nonMemberKey)
-
-	if nonMemberProof.Membership {
-		t.Fatalf("[%s] Expected membership=false for key 9999", name)
+	nonMemberProof, err := tree.GenerateProof(nonMemberKey)
+	if err != nil {
+		t.Fatalf("[%s] GenerateProof non-member failed: %v", name, err)
 	}
-	if !smt.VerifyProof(hasher, nonMemberProof, treeDepth) {
-		t.Fatalf("[%s] Non-membership proof verification failed for key 9999", name)
+	if nonMemberProof.ProofType != leanimt.ProofNonMembership {
+		t.Fatalf("[%s] Expected non-membership proof, got %d", name, nonMemberProof.ProofType)
 	}
-	t.Logf("[%s] Non-membership proof verified for key 9999", name)
+	if !leanimt.VerifyProof(hasher, nonMemberProof) {
+		t.Fatalf("[%s] Non-membership proof verification failed", name)
+	}
 
 	t.Logf("[%s] Integration test passed: %d entries, root=0x%s",
-		name, tree.Count, tree.Root.Text(16))
+		name, tree.Size(), root.Text(16))
 }

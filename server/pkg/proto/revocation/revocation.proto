@@ -11,18 +11,23 @@ service RevocationProofService {
 
 message GetProofRequest {
   string issuer_id = 1;
-  string serial_number = 2; // hex string
+  string serial_number = 2;
+}
+
+message IndexedLeaf {
+  string value = 1;
+  string next_value = 2;
 }
 
 message GetProofResponse {
   string issuer_id = 1;
   string serial_number = 2;
-  repeated string entry = 3;
-  repeated string matching_entry = 4;
-  repeated string siblings = 5;
-  string root = 6;
-  bool membership = 7;
-  int32 depth = 8;
+  uint32 proof_type = 3;
+  string root = 4;
+  string value = 5;
+  IndexedLeaf leaf = 6;
+  uint64 leaf_index = 7;
+  repeated string siblings = 8;
 }
 
 message GetStatusRequest {}
@@ -34,8 +39,10 @@ message GetStatusResponse {
 
 message IssuerStatus {
   bool loaded = 1;
-  int32 count = 2;
-  string root = 3;
-  uint64 crl_number = 4;
-  string loaded_at = 5;
+  int32 size = 2;
+  int32 leaf_count = 3;
+  int32 depth = 4;
+  string root = 5;
+  uint64 crl_number = 6;
+  string loaded_at = 7;
 }

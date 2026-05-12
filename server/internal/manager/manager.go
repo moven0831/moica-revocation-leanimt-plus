@@ -6,41 +6,35 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
+	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
 )
 
-// TreeEntry holds a single issuer's SMT and metadata.
 type TreeEntry struct {
-	Tree      *smt.SMT
+	Tree      *leanimt.LeanIMTPlus
 	CRLNumber uint64
 	LoadedAt  time.Time
 }
 
-// TreeManager holds per-issuer SMTs with thread-safe access.
 type TreeManager struct {
-	mu      sync.RWMutex
-	trees   map[string]*TreeEntry
-	hasher  smt.Hasher
+	mu     sync.RWMutex
+	trees  map[string]*TreeEntry
+	hasher leanimt.Hasher
 }
 
-// New creates a TreeManager with the given hasher.
-func New(h smt.Hasher) *TreeManager {
+func New(h leanimt.Hasher) *TreeManager {
 	return &TreeManager{
 		trees:  make(map[string]*TreeEntry),
 		hasher: h,
 	}
 }
 
-// Hasher returns the hasher used by this manager.
-func (m *TreeManager) Hasher() smt.Hasher {
+func (m *TreeManager) Hasher() leanimt.Hasher {
 	return m.hasher
 }
 
-// GetTree returns the tree entry for the given issuer ID.
 func (m *TreeManager) GetTree(issuerID string) (*TreeEntry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
 	entry, ok := m.trees[issuerID]
 	if !ok {
 		return nil, fmt.Errorf("unknown issuer: %s", issuerID)
@@ -48,11 +42,9 @@ func (m *TreeManager) GetTree(issuerID string) (*TreeEntry, error) {
 	return entry, nil
 }
 
-// SetTree atomically replaces the tree for an issuer ID.
-func (m *TreeManager) SetTree(issuerID string, tree *smt.SMT, crlNumber uint64) {
+func (m *TreeManager) SetTree(issuerID string, tree *leanimt.LeanIMTPlus, crlNumber uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	m.trees[issuerID] = &TreeEntry{
 		Tree:      tree,
 		CRLNumber: crlNumber,
@@ -60,8 +52,7 @@ func (m *TreeManager) SetTree(issuerID string, tree *smt.SMT, crlNumber uint64) 
 	}
 }
 
-// GetProof generates a proof for the given issuer and serial number.
-func (m *TreeManager) GetProof(issuerID string, serialNumber *big.Int) (*smt.MerkleProof, error) {
+func (m *TreeManager) GetProof(issuerID string, serialNumber *big.Int) (*leanimt.Proof, error) {
 	m.mu.RLock()
 	entry, ok := m.trees[issuerID]
 	m.mu.RUnlock()
@@ -69,15 +60,12 @@ func (m *TreeManager) GetProof(issuerID string, serialNumber *big.Int) (*smt.Mer
 	if !ok {
 		return nil, fmt.Errorf("unknown issuer: %s", issuerID)
 	}
-
-	return entry.Tree.CreateProof(serialNumber), nil
+	return entry.Tree.GenerateProof(serialNumber)
 }
 
-// IssuerIDs returns a list of all loaded issuer IDs.
 func (m *TreeManager) IssuerIDs() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
 	ids := make([]string, 0, len(m.trees))
 	for id := range m.trees {
 		ids = append(ids, id)
@@ -85,10 +73,11 @@ func (m *TreeManager) IssuerIDs() []string {
 	return ids
 }
 
-// Status returns status info for all loaded issuers.
 type IssuerStatus struct {
 	Loaded    bool   `json:"loaded"`
-	Count     int    `json:"count"`
+	Size      int    `json:"size"`
+	LeafCount int    `json:"leafCount"`
+	Depth     int    `json:"depth"`
 	Root      string `json:"root"`
 	CRLNumber uint64 `json:"crlNumber"`
 	LoadedAt  string `json:"loadedAt"`
@@ -101,12 +90,14 @@ func (m *TreeManager) Status() map[string]IssuerStatus {
 	status := make(map[string]IssuerStatus)
 	for id, entry := range m.trees {
 		root := "0x0"
-		if entry.Tree.Root != nil && entry.Tree.Root.Sign() != 0 {
-			root = "0x" + entry.Tree.Root.Text(16)
+		if r := entry.Tree.Root(); r != nil && r.Sign() != 0 {
+			root = "0x" + r.Text(16)
 		}
 		status[id] = IssuerStatus{
 			Loaded:    true,
-			Count:     entry.Tree.Count,
+			Size:      entry.Tree.Size(),
+			LeafCount: entry.Tree.LeafCount(),
+			Depth:     entry.Tree.Depth(),
 			Root:      root,
 			CRLNumber: entry.CRLNumber,
 			LoadedAt:  entry.LoadedAt.UTC().Format(time.RFC3339),
