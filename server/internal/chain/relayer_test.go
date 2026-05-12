@@ -16,12 +16,11 @@ import (
 	"github.com/moven0831/moica-revocation-smt/server/internal/chain/contract"
 )
 
-// testEnv holds a simulated backend with a deployed SMTRootStorage contract.
 type testEnv struct {
 	backend  *simulated.Backend
 	key      *ecdsa.PrivateKey
 	relayer  *Relayer
-	contract *contract.SMTRootStorage
+	contract *contract.LeanIMTPlusRootStorage
 	addr     common.Address
 }
 
@@ -51,7 +50,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 
-	addr, _, instance, err := contract.DeploySMTRootStorage(auth, client, relayerAddr)
+	addr, _, instance, err := contract.DeployLeanIMTPlusRootStorage(auth, client, relayerAddr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,10 +72,14 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 }
 
-// commitPeriodically commits blocks in the background so WaitMined can return.
-func commitPeriodically(t *testing.T, backend *simulated.Backend, done <-chan struct{}) {
+// commitPeriodically drives the simulated backend forward so WaitMined
+// can return. Caller MUST close done and wait on the returned function before
+// the backend is torn down, otherwise the goroutine races backend.Close.
+func commitPeriodically(t *testing.T, backend *simulated.Backend, done <-chan struct{}) func() {
 	t.Helper()
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -88,6 +91,7 @@ func commitPeriodically(t *testing.T, backend *simulated.Backend, done <-chan st
 			}
 		}
 	}()
+	return func() { <-stopped }
 }
 
 func TestIssuerIDs(t *testing.T) {
@@ -118,8 +122,6 @@ func TestVerifyContract(t *testing.T) {
 
 func TestVerifyContractWrongAddress(t *testing.T) {
 	env := newTestEnv(t)
-
-	// Point relayer at a non-contract address.
 	env.relayer.contractAddress = common.HexToAddress("0x0000000000000000000000000000000000000001")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -135,16 +137,18 @@ func TestPostRoot(t *testing.T) {
 	env := newTestEnv(t)
 
 	done := make(chan struct{})
-	defer close(done)
-	commitPeriodically(t, env.backend, done)
+	wait := commitPeriodically(t, env.backend, done)
+	defer func() { close(done); wait() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	root := big.NewInt(12345)
 	crlNumber := big.NewInt(100)
+	depth := uint8(19)
+	leafCount := uint64(412345)
 
-	tx, err := env.relayer.PostRoot(ctx, IssuerG2, root, crlNumber)
+	tx, err := env.relayer.PostRoot(ctx, IssuerG2, root, crlNumber, depth, leafCount)
 	if err != nil {
 		t.Fatalf("PostRoot failed: %v", err)
 	}
@@ -152,13 +156,23 @@ func TestPostRoot(t *testing.T) {
 		t.Fatal("expected non-nil transaction")
 	}
 
-	// Verify on-chain state.
-	stored, err := env.contract.GetRoot(nil, IssuerG2)
+	storedRoot, err := env.contract.GetRoot(nil, IssuerG2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Cmp(root) != 0 {
-		t.Errorf("stored root = %s, want %s", stored, root)
+	if storedRoot.Cmp(root) != 0 {
+		t.Errorf("stored root = %s, want %s", storedRoot, root)
+	}
+
+	info, err := env.contract.GetRootInfo(nil, IssuerG2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Depth != depth {
+		t.Errorf("stored depth = %d, want %d", info.Depth, depth)
+	}
+	if info.LeafCount != leafCount {
+		t.Errorf("stored leafCount = %d, want %d", info.LeafCount, leafCount)
 	}
 }
 
@@ -166,20 +180,18 @@ func TestPostRootStaleCRL(t *testing.T) {
 	env := newTestEnv(t)
 
 	done := make(chan struct{})
-	defer close(done)
-	commitPeriodically(t, env.backend, done)
+	wait := commitPeriodically(t, env.backend, done)
+	defer func() { close(done); wait() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// First post succeeds.
-	_, err := env.relayer.PostRoot(ctx, IssuerG2, big.NewInt(111), big.NewInt(100))
+	_, err := env.relayer.PostRoot(ctx, IssuerG2, big.NewInt(111), big.NewInt(100), 5, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Second post with same CRL number should fail with "stale CRL".
-	_, err = env.relayer.PostRoot(ctx, IssuerG2, big.NewInt(222), big.NewInt(100))
+	_, err = env.relayer.PostRoot(ctx, IssuerG2, big.NewInt(222), big.NewInt(100), 5, 32)
 	if err == nil {
 		t.Fatal("expected error for stale CRL number, got nil")
 	}
@@ -192,25 +204,22 @@ func TestPostRootMultipleIssuers(t *testing.T) {
 	env := newTestEnv(t)
 
 	done := make(chan struct{})
-	defer close(done)
-	commitPeriodically(t, env.backend, done)
+	wait := commitPeriodically(t, env.backend, done)
+	defer func() { close(done); wait() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Post G2.
-	_, err := env.relayer.PostRoot(ctx, IssuerG2, big.NewInt(111), big.NewInt(10))
+	_, err := env.relayer.PostRoot(ctx, IssuerG2, big.NewInt(111), big.NewInt(10), 4, 16)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Post G3.
-	_, err = env.relayer.PostRoot(ctx, IssuerG3, big.NewInt(222), big.NewInt(20))
+	_, err = env.relayer.PostRoot(ctx, IssuerG3, big.NewInt(222), big.NewInt(20), 5, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Verify independently.
 	g2Root, _ := env.contract.GetRoot(nil, IssuerG2)
 	g3Root, _ := env.contract.GetRoot(nil, IssuerG3)
 

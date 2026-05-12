@@ -25,7 +25,7 @@ type EthBackend interface {
 	bind.DeployBackend
 }
 
-// Relayer signs and sends setRoot transactions to SMTRootStorage.
+// Relayer signs and sends setRoot transactions to LeanIMTPlusRootStorage.
 type Relayer struct {
 	client          *Client
 	backend         EthBackend
@@ -75,9 +75,8 @@ func (r *Relayer) ContractAddress() common.Address {
 	return r.contractAddress
 }
 
-// VerifyContract checks that the contract is reachable and the on-chain relayer matches this relayer's address.
 func (r *Relayer) VerifyContract(ctx context.Context) error {
-	instance, err := contract.NewSMTRootStorage(r.contractAddress, r.backend)
+	instance, err := contract.NewLeanIMTPlusRootStorage(r.contractAddress, r.backend)
 	if err != nil {
 		return fmt.Errorf("bind contract: %w", err)
 	}
@@ -95,9 +94,8 @@ func (r *Relayer) VerifyContract(ctx context.Context) error {
 	return nil
 }
 
-// PostRoot sends a setRoot transaction to the SMTRootStorage contract and waits for confirmation.
-func (r *Relayer) PostRoot(ctx context.Context, issuerID [32]byte, root *big.Int, crlNumber *big.Int) (*types.Transaction, error) {
-	instance, err := contract.NewSMTRootStorage(r.contractAddress, r.backend)
+func (r *Relayer) PostRoot(ctx context.Context, issuerID [32]byte, root *big.Int, crlNumber *big.Int, depth uint8, leafCount uint64) (*types.Transaction, error) {
+	instance, err := contract.NewLeanIMTPlusRootStorage(r.contractAddress, r.backend)
 	if err != nil {
 		return nil, fmt.Errorf("bind contract: %w", err)
 	}
@@ -107,7 +105,7 @@ func (r *Relayer) PostRoot(ctx context.Context, issuerID [32]byte, root *big.Int
 		return nil, fmt.Errorf("transact opts: %w", err)
 	}
 
-	tx, err := instance.SetRoot(opts, issuerID, root, crlNumber)
+	tx, err := instance.SetRoot(opts, issuerID, root, crlNumber, depth, leafCount)
 	if err != nil {
 		return nil, fmt.Errorf("setRoot: %w", err)
 	}
