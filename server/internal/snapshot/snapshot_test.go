@@ -2,117 +2,122 @@ package snapshot
 
 import (
 	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
+	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
 )
 
-func TestSnapshotRoundTrip(t *testing.T) {
-	h := smt.NewPoseidonHasher()
-	tree := smt.New(h)
+func bigsFromHex(t *testing.T, hexes ...string) []*big.Int {
+	t.Helper()
+	out := make([]*big.Int, len(hexes))
+	for i, h := range hexes {
+		n, ok := new(big.Int).SetString(h, 16)
+		if !ok {
+			t.Fatalf("invalid hex: %s", h)
+		}
+		out[i] = n
+	}
+	return out
+}
 
-	serials := []string{
+func buildLeanTree(t *testing.T) *leanimt.LeanIMTPlus {
+	t.Helper()
+	h := leanimt.NewPoseidonHasher()
+	tree := leanimt.New(h)
+	serials := bigsFromHex(t,
 		"100048210DD2DF2E128096A9282B5EC5",
 		"200048210DD2DF2E128096A9282B5EC5",
 		"300048210DD2DF2E128096A9282B5EC5",
+	)
+	if err := tree.InsertManySorted(serials); err != nil {
+		t.Fatal(err)
 	}
+	return tree
+}
 
-	for _, s := range serials {
-		key, _ := new(big.Int).SetString(s, 16)
-		tree.Add(key, big.NewInt(1))
-	}
+func TestSnapshotRoundTrip(t *testing.T) {
+	h := leanimt.NewPoseidonHasher()
+	tree := buildLeanTree(t)
 
-	originalRoot := new(big.Int).Set(tree.Root)
-	originalCount := tree.Count
+	originalRoot := tree.Root()
+	originalSize := tree.Size()
+	originalDepth := tree.Depth()
 
-	// Export
 	var buf bytes.Buffer
 	if err := Export(tree, 0, &buf); err != nil {
 		t.Fatal("export:", err)
 	}
 
-	// Import
 	restored, _, err := Import(h, &buf)
 	if err != nil {
 		t.Fatal("import:", err)
 	}
+	if restored.Root().Cmp(originalRoot) != 0 {
+		t.Errorf("root mismatch: got %s, want %s", restored.Root().Text(16), originalRoot.Text(16))
+	}
+	if restored.Size() != originalSize {
+		t.Errorf("size mismatch: got %d, want %d", restored.Size(), originalSize)
+	}
+	if restored.Depth() != originalDepth {
+		t.Errorf("depth mismatch: got %d, want %d", restored.Depth(), originalDepth)
+	}
 
-	// Verify root and count match
-	if restored.Root.Cmp(originalRoot) != 0 {
-		t.Errorf("root mismatch: got %s, want %s", restored.Root.Text(16), originalRoot.Text(16))
+	member := bigsFromHex(t, "100048210DD2DF2E128096A9282B5EC5")[0]
+	proof, err := restored.GenerateProof(member)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if restored.Count != originalCount {
-		t.Errorf("count mismatch: got %d, want %d", restored.Count, originalCount)
+	if proof.ProofType != leanimt.ProofMembership {
+		t.Fatal("expected membership proof")
 	}
-
-	// Verify membership proof works on restored tree
-	key, _ := new(big.Int).SetString(serials[0], 16)
-	proof := restored.CreateProof(key)
-	if !proof.Membership {
-		t.Fatal("membership proof failed on restored tree")
-	}
-	if !smt.VerifyProof(h, proof, smt.DefaultDepth) {
+	if !leanimt.VerifyProof(h, proof) {
 		t.Fatal("proof verification failed on restored tree")
 	}
 
-	// Verify non-membership proof works on restored tree
-	nonMember, _ := new(big.Int).SetString("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", 16)
-	nonProof := restored.CreateProof(nonMember)
-	if nonProof.Membership {
-		t.Fatal("non-member should not be member")
+	nonMember := bigsFromHex(t, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")[0]
+	nonProof, err := restored.GenerateProof(nonMember)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !smt.VerifyProof(h, nonProof, smt.DefaultDepth) {
-		t.Fatal("non-membership proof verification failed on restored tree")
+	if nonProof.ProofType != leanimt.ProofNonMembership {
+		t.Fatal("expected non-membership proof")
+	}
+	if !leanimt.VerifyProof(h, nonProof) {
+		t.Fatal("non-membership verification failed")
 	}
 }
 
 func TestExportFileRoundTrip(t *testing.T) {
-	h := smt.NewPoseidonHasher()
-	tree := smt.New(h)
-
-	serials := []string{
-		"100048210DD2DF2E128096A9282B5EC5",
-		"200048210DD2DF2E128096A9282B5EC5",
-		"300048210DD2DF2E128096A9282B5EC5",
-	}
-	for _, s := range serials {
-		key, _ := new(big.Int).SetString(s, 16)
-		tree.Add(key, big.NewInt(1))
-	}
-
-	originalRoot := new(big.Int).Set(tree.Root)
-	originalCount := tree.Count
+	h := leanimt.NewPoseidonHasher()
+	tree := buildLeanTree(t)
+	originalRoot := tree.Root()
 	var crlNum uint64 = 99
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sub", "tree-snapshot.json.gz")
-
 	if err := ExportFile(tree, crlNum, path); err != nil {
-		t.Fatal("ExportFile:", err)
+		t.Fatal(err)
 	}
-
 	if _, err := os.Stat(path); err != nil {
-		t.Fatal("snapshot file not found:", err)
+		t.Fatal(err)
 	}
 
 	restored, gotCRL, err := ImportFile(h, path)
 	if err != nil {
-		t.Fatal("ImportFile:", err)
+		t.Fatal(err)
 	}
-	if restored.Root.Cmp(originalRoot) != 0 {
-		t.Errorf("root mismatch: got %s, want %s", restored.Root.Text(16), originalRoot.Text(16))
-	}
-	if restored.Count != originalCount {
-		t.Errorf("count mismatch: got %d, want %d", restored.Count, originalCount)
+	if restored.Root().Cmp(originalRoot) != 0 {
+		t.Errorf("root mismatch")
 	}
 	if gotCRL != crlNum {
 		t.Errorf("crlNumber: got %d, want %d", gotCRL, crlNum)
 	}
 
-	// Verify no .tmp files remain
 	entries, _ := os.ReadDir(filepath.Dir(path))
 	for _, e := range entries {
 		if filepath.Ext(e.Name()) == ".tmp" {
@@ -122,50 +127,57 @@ func TestExportFileRoundTrip(t *testing.T) {
 }
 
 func TestSnapshotEmpty(t *testing.T) {
-	h := smt.NewPoseidonHasher()
-	tree := smt.New(h)
+	h := leanimt.NewPoseidonHasher()
+	tree := leanimt.New(h)
 
 	var buf bytes.Buffer
 	if err := Export(tree, 0, &buf); err != nil {
-		t.Fatal("export empty:", err)
+		t.Fatal(err)
 	}
-
 	restored, _, err := Import(h, &buf)
 	if err != nil {
-		t.Fatal("import empty:", err)
+		t.Fatal(err)
 	}
-
-	if restored.Root.Sign() != 0 {
-		t.Error("empty tree root should be zero")
+	if restored.Root() != nil {
+		t.Errorf("empty tree root should be nil, got %v", restored.Root())
 	}
-	if restored.Count != 0 {
-		t.Error("empty tree count should be zero")
+	if restored.Size() != 0 {
+		t.Errorf("empty Size: got %d", restored.Size())
 	}
 }
 
 func TestSnapshotCRLNumber(t *testing.T) {
-	h := smt.NewPoseidonHasher()
-	tree := smt.New(h)
-
-	key, _ := new(big.Int).SetString("ABCDEF", 16)
-	tree.Add(key, big.NewInt(1))
-
+	h := leanimt.NewPoseidonHasher()
+	tree := leanimt.New(h)
+	if err := tree.Insert(big.NewInt(0xABCDEF)); err != nil {
+		t.Fatal(err)
+	}
 	var crlNum uint64 = 42
-
 	var buf bytes.Buffer
 	if err := Export(tree, crlNum, &buf); err != nil {
-		t.Fatal("export:", err)
+		t.Fatal(err)
 	}
-
 	restored, gotCRL, err := Import(h, &buf)
 	if err != nil {
-		t.Fatal("import:", err)
+		t.Fatal(err)
 	}
-
 	if gotCRL != crlNum {
-		t.Errorf("crlNumber: got %d, want %d", gotCRL, crlNum)
+		t.Errorf("got %d want %d", gotCRL, crlNum)
 	}
-	if restored.Root.Cmp(tree.Root) != 0 {
+	if restored.Root().Cmp(tree.Root()) != 0 {
 		t.Errorf("root mismatch")
+	}
+}
+
+func TestSnapshotRejectsWrongVersion(t *testing.T) {
+	h := leanimt.NewPoseidonHasher()
+	v1 := map[string]any{"version": 1, "root": "0x0", "nodes": []any{}}
+	body, _ := json.Marshal(v1)
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	gw.Write(body)
+	gw.Close()
+	if _, _, err := Import(h, &buf); err == nil {
+		t.Fatal("expected version mismatch error")
 	}
 }

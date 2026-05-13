@@ -7,17 +7,19 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
 	"github.com/moven0831/moica-revocation-smt/server/internal/manager"
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
 )
 
 func setupTestServer() (*Handler, *manager.TreeManager) {
-	h := smt.NewPoseidonHasher()
+	h := leanimt.NewPoseidonHasher()
 	mgr := manager.New(h)
 
-	tree := smt.New(h)
+	tree := leanimt.New(h)
 	serial, _ := new(big.Int).SetString("100048210DD2DF2E128096A9282B5EC5", 16)
-	tree.Add(serial, big.NewInt(1))
+	if err := tree.Insert(serial); err != nil {
+		panic(err)
+	}
 	mgr.SetTree("g2", tree, 100)
 
 	handler := NewHandler(mgr)
@@ -41,22 +43,18 @@ func TestGetProofMembership(t *testing.T) {
 		t.Fatal("json decode:", err)
 	}
 
-	if !resp.Membership {
-		t.Error("expected membership=true")
+	if resp.ProofType != int(leanimt.ProofMembership) {
+		t.Errorf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofMembership)
 	}
 	if resp.IssuerID != "g2" {
 		t.Errorf("issuerId: got %s, want g2", resp.IssuerID)
 	}
-	if len(resp.Entry) != 3 {
-		t.Errorf("entry length: got %d, want 3", len(resp.Entry))
-	}
-	if resp.Depth != smt.DefaultDepth {
-		t.Errorf("depth: got %d, want %d", resp.Depth, smt.DefaultDepth)
+	if resp.Leaf.Value != resp.Value {
+		t.Errorf("leaf.value=%s, value=%s — should match for membership", resp.Leaf.Value, resp.Value)
 	}
 
-	// Verify the proof
-	h := smt.NewPoseidonHasher()
-	ok, err := VerifyProofFromResponse(h, &resp, smt.DefaultDepth)
+	h := leanimt.NewPoseidonHasher()
+	ok, err := VerifyProofFromResponse(h, &resp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,8 +78,17 @@ func TestGetProofNonMembership(t *testing.T) {
 	var resp ProofResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	if resp.Membership {
-		t.Error("expected membership=false")
+	if resp.ProofType != int(leanimt.ProofNonMembership) {
+		t.Errorf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofNonMembership)
+	}
+
+	h := leanimt.NewPoseidonHasher()
+	ok, err := VerifyProofFromResponse(h, &resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Error("non-membership proof verification failed")
 	}
 }
 
@@ -102,7 +109,6 @@ func TestGetProofInvalidSerial(t *testing.T) {
 	handler, _ := setupTestServer()
 	router := handler.Router()
 
-	// Not valid hex
 	req := httptest.NewRequest("GET", "/proof/g2/ZZZZ", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -136,8 +142,11 @@ func TestGetStatus(t *testing.T) {
 	if !g2.Loaded {
 		t.Error("g2 should be loaded")
 	}
-	if g2.Count != 1 {
-		t.Errorf("g2 count: got %d, want 1", g2.Count)
+	if g2.Size != 1 {
+		t.Errorf("g2 size: got %d, want 1", g2.Size)
+	}
+	if g2.Depth < 1 {
+		t.Errorf("g2 depth: got %d, want >= 1", g2.Depth)
 	}
 	if g2.CRLNumber != 100 {
 		t.Errorf("g2 crlNumber: got %d, want 100", g2.CRLNumber)

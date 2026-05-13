@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SMT WASM Benchmark</title>
+<title>LeanIMT+ WASM Benchmark</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
   h1 { font-size: 1.4rem; }
@@ -21,10 +21,10 @@
 </head>
 <body>
 
-<h1>MOICA SMT WASM Benchmark</h1>
+<h1>MOICA LeanIMT+ WASM Benchmark</h1>
 
 <div>
-  <label>Snapshot URL (gzipped binary): <br>
+  <label>Snapshot URL (gzipped binary v2): <br>
     <input id="snapshotUrl" type="text" value="tree-snapshot.bin.gz" placeholder="URL or local path to .bin.gz snapshot">
   </label>
   <div style="font-size:0.8rem;color:#666;margin-top:2px;">
@@ -56,10 +56,9 @@
 
 <script src="wasm_exec.js"></script>
 <script>
-const CHUNK_SIZE = 10000;
-const BINARY_HEADER_SIZE = 52;
-const BRANCH_NODE_SIZE = 97; // 1 + 32 + 32 + 32
-const LEAF_NODE_SIZE = 129;  // 1 + 32 + 32 + 32 + 32
+const BINARY_MAGIC = 0x4C49; // "LI"
+const BINARY_VERSION = 2;
+const BINARY_HEADER_SIZE = 50;
 
 const statusEl = document.getElementById('status');
 const runBtn = document.getElementById('runBtn');
@@ -88,13 +87,11 @@ function addResult(metric, value) {
   document.getElementById('results').style.display = '';
 }
 
-// Check for DecompressionStream support
 if (!('DecompressionStream' in window)) {
   log('ERROR: DecompressionStream API not available in this browser.');
   log('Required: Chrome 80+, Firefox 113+, Safari 16.4+');
   statusEl.classList.add('error');
 } else {
-  // Load WASM
   const go = new Go();
   const wasmFetchStart = performance.now();
   WebAssembly.instantiateStreaming(fetch('smt.wasm'), go.importObject).then(result => {
@@ -103,13 +100,11 @@ if (!('DecompressionStream' in window)) {
     log(`WASM loaded in ${formatMs(wasmLoadTime)}`);
     runBtn.textContent = 'Run Benchmark';
     runBtn.disabled = false;
-    addResult('WASM binary size', formatBytes(result.module ? 'N/A' : 'N/A'));
   }).catch(err => {
     log('WASM load error: ' + err.message);
     statusEl.classList.add('error');
   });
 
-  // Also fetch the WASM size via HEAD
   fetch('smt.wasm', { method: 'HEAD' }).then(r => {
     const size = r.headers.get('content-length');
     if (size) addResult('WASM binary size', formatBytes(parseInt(size)));
@@ -126,7 +121,6 @@ async function runBenchmark() {
   const testKey = document.getElementById('testKey').value;
 
   try {
-    // 1. Download
     log('Downloading snapshot...');
     const dlStart = performance.now();
     const response = await fetch(url);
@@ -134,7 +128,6 @@ async function runBenchmark() {
     const contentLength = response.headers.get('content-length');
     if (contentLength) addResult('Snapshot download size', formatBytes(parseInt(contentLength)));
 
-    // 2. Decompress
     log('Decompressing...');
     const decompStart = performance.now();
     const dlTime = decompStart - dlStart;
@@ -149,80 +142,32 @@ async function runBenchmark() {
     addResult('Decompress time', formatMs(decompTime));
     log(`Decompressed: ${formatBytes(decompressedBytes.length)} in ${formatMs(decompTime)}`);
 
-    // 3. Parse header
     const view = new DataView(decompressedBytes.buffer);
     const magic = view.getUint16(0);
-    if (magic !== 0x534D) throw new Error(`Invalid magic: 0x${magic.toString(16)}`);
+    if (magic !== BINARY_MAGIC) throw new Error(`Invalid magic: 0x${magic.toString(16)} (expected 0x${BINARY_MAGIC.toString(16)})`);
     const version = view.getUint16(2);
-    if (version !== 1) throw new Error(`Unsupported version: ${version}`);
-    const nodeCount = view.getUint32(4);
-    const rootHash = Array.from(decompressedBytes.slice(8, 40)).map(b => b.toString(16).padStart(2, '0')).join('');
-    const depth = view.getUint32(40);
-    const crlNumber = Number(view.getBigUint64(44));
+    if (version !== BINARY_VERSION) throw new Error(`Unsupported version: ${version}`);
+    const depth = view.getUint16(4);
+    const leafCount = view.getUint32(6);
+    const crlNumber = Number(view.getBigUint64(10));
+    const rootHash = Array.from(decompressedBytes.slice(18, 50)).map(b => b.toString(16).padStart(2, '0')).join('');
 
-    log(`Header: ${nodeCount} nodes, depth=${depth}, CRL#${crlNumber}`);
-    addResult('Node count', nodeCount.toLocaleString());
+    log(`Header: depth=${depth}, leafCount=${leafCount}, CRL#${crlNumber}`);
     addResult('Tree depth', depth);
+    addResult('Leaf count', leafCount.toLocaleString());
 
-    // 4. Initialize tree
-    log('Initializing WASM tree...');
-    smtInitTree(nodeCount, depth);
-
-    // 5. Stream nodes in chunks
-    log('Loading nodes into WASM...');
+    log('Loading snapshot into WASM...');
     const loadStart = performance.now();
-    let offset = BINARY_HEADER_SIZE;
-    let totalParsed = 0;
-    let chunkNum = 0;
-
-    while (offset < decompressedBytes.length) {
-      // Determine chunk end: read up to CHUNK_SIZE nodes
-      let chunkEnd = offset;
-      let nodesInChunk = 0;
-      while (nodesInChunk < CHUNK_SIZE && chunkEnd < decompressedBytes.length) {
-        const isLeaf = decompressedBytes[chunkEnd] === 1;
-        const nodeSize = isLeaf ? LEAF_NODE_SIZE : BRANCH_NODE_SIZE;
-        if (chunkEnd + nodeSize > decompressedBytes.length) break;
-        chunkEnd += nodeSize;
-        nodesInChunk++;
-      }
-
-      if (nodesInChunk === 0) break;
-
-      const chunk = decompressedBytes.slice(offset, chunkEnd);
-      const parsed = smtAddNodeChunk(chunk);
-      totalParsed += parsed;
-      offset = chunkEnd;
-      chunkNum++;
-
-      if (chunkNum % 10 === 0) {
-        log(`  Loaded ${totalParsed.toLocaleString()} / ${nodeCount.toLocaleString()} nodes`);
-      }
-    }
-
+    const info = leanimtLoadSnapshot(decompressedBytes);
     const loadTime = performance.now() - loadStart;
-    log(`Loaded ${totalParsed.toLocaleString()} nodes in ${formatMs(loadTime)}`);
     addResult('Tree load time', formatMs(loadTime));
+    addResult('Tree size (user leaves)', info.size.toLocaleString());
+    log(`Loaded in ${formatMs(loadTime)}`);
 
-    // Count leaves for finalize
-    // We know from the binary format that leaves have type=1
-    // totalParsed is total nodes; we need leaf count
-    // Re-scan to count leaves (fast, just check type bytes)
-    let leafCount = 0;
-    let scanOffset = BINARY_HEADER_SIZE;
-    while (scanOffset < decompressedBytes.length) {
-      const isLeaf = decompressedBytes[scanOffset] === 1;
-      if (isLeaf) leafCount++;
-      scanOffset += isLeaf ? LEAF_NODE_SIZE : BRANCH_NODE_SIZE;
-    }
+    const wasmRoot = leanimtRoot();
+    log(`Root: ${wasmRoot.slice(0, 16)}...`);
 
-    // 6. Finalize
-    smtFinalize(rootHash, leafCount);
-    log(`Finalized: root=${rootHash.slice(0,16)}..., count=${leafCount}`);
-    addResult('Leaf count (entries)', leafCount.toLocaleString());
-
-    // 7. Memory stats
-    const memJSON = smtGetMemStats();
+    const memJSON = leanimtGetMemStats();
     const mem = JSON.parse(memJSON);
     addResult('WASM heap in use', formatBytes(mem.heapInuse));
     addResult('WASM heap alloc', formatBytes(mem.heapAlloc));
@@ -230,33 +175,29 @@ async function runBenchmark() {
     addResult('GC cycles', mem.numGC);
     log(`Memory: heapInuse=${formatBytes(mem.heapInuse)}, sys=${formatBytes(mem.sys)}`);
 
-    // 8. Generate proof
     log(`Generating proof for ${testKey}...`);
     const proofStart = performance.now();
-    const proofJSON = smtCreateProof(testKey);
+    const proofJSON = leanimtGenerateProof(testKey);
     const proofTime = performance.now() - proofStart;
     addResult('Proof generation time', formatMs(proofTime));
     log(`Proof generated in ${formatMs(proofTime)}`);
 
     const proof = JSON.parse(proofJSON);
-    addResult('Proof type', proof.membership ? 'Membership' : 'Non-membership');
+    addResult('Proof type', proof.proofType === 0 ? 'Membership' : 'Non-membership');
     addResult('Siblings count', proof.siblings.length);
 
-    // 9. Verify proof
     const verifyStart = performance.now();
-    const valid = smtVerifyProof(proofJSON);
+    const valid = leanimtVerifyProof(proofJSON);
     const verifyTime = performance.now() - verifyStart;
     addResult('Proof verification time', formatMs(verifyTime));
     addResult('Proof valid', valid ? 'YES' : 'NO');
     log(`Verification: ${valid ? 'VALID' : 'INVALID'} in ${formatMs(verifyTime)}`);
 
-    // 10. Total time
     const totalTime = performance.now() - dlStart;
     addResult('TOTAL end-to-end time', formatMs(totalTime));
     log(`\nDONE. Total: ${formatMs(totalTime)}`);
     statusEl.classList.add(valid ? 'pass' : 'error');
 
-    // Show proof
     document.getElementById('proofJSON').textContent = JSON.stringify(proof, null, 2);
     document.getElementById('proofOutput').style.display = '';
 

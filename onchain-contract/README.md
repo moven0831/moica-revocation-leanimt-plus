@@ -1,24 +1,21 @@
-# SMTRootStorage
+# LeanIMTPlusRootStorage
 
-On-chain registry for Sparse Merkle Tree roots from MOICA Certificate Revocation Lists.
+On-chain registry for LeanIMT+ roots from MOICA Certificate Revocation Lists.
 
-## Deployed Contract
+The CRL pipeline (fetch → parse → build LeanIMT+) produces a Merkle root, depth, and leaf count per issuer, which the CI relayer posts on-chain via `setRoot()`. The contract enforces monotonic CRL numbers to prevent stale updates. Anyone can read the latest root with `getRoot(issuerId)` or full metadata via `getRootInfo(issuerId)` and verify membership/non-membership proofs off-chain.
 
-| Network | Address |
-|---------|---------|
-| Arbitrum Sepolia | [`0xc461326eb6e46F10A276B0F14BFFf8b256A43FFA`](https://sepolia.arbiscan.io/address/0xc461326eb6e46F10A276B0F14BFFf8b256A43FFA) |
-
-The CRL pipeline (fetch → parse → build SMT) produces a Merkle root per issuer, which the CI relayer posts on-chain via `setRoot()`. The contract enforces monotonic CRL numbers to prevent stale updates. Anyone can read the latest root with `getRoot(issuerId)` and verify membership/non-membership proofs off-chain.
+> **Migration note:** This contract replaces the prior `SMTRootStorage`. The `setRoot` ABI gained `depth` (uint8) and `leafCount` (uint64), and the `RootUpdated` event topic-0 hash changed. Off-chain indexers relying on the old event must re-index. The deployment address from the SMT-era is **not** reusable — redeploy and update `CONTRACT_ADDRESS`.
 
 ## Contract
 
-**SMTRootStorage.sol** (Solidity 0.8.28)
+**LeanIMTPlusRootStorage.sol** (Solidity 0.8.28)
 
 | Function | Description |
 |----------|-------------|
 | `constructor(address _relayer)` | Sets the authorized relayer |
-| `setRoot(bytes32 issuerId, uint256 newRoot, uint256 crlNumber)` | Update root (relayer only) |
+| `setRoot(bytes32 issuerId, uint256 newRoot, uint256 crlNumber, uint8 depth, uint64 leafCount)` | Update root (relayer only) |
 | `getRoot(bytes32 issuerId) → uint256` | Read current root |
+| `getRootInfo(bytes32 issuerId) → (root, crlNumber, updatedAt, depth, leafCount)` | Read full RootInfo |
 
 **State:**
 ```solidity
@@ -29,12 +26,14 @@ struct RootInfo {
     uint256 root;
     uint256 crlNumber;
     uint256 updatedAt;
+    uint8   depth;
+    uint64  leafCount;
 }
 ```
 
 **Events:**
 ```solidity
-event RootUpdated(bytes32 indexed issuerId, uint256 root, uint256 crlNumber);
+event RootUpdated(bytes32 indexed issuerId, uint256 root, uint256 crlNumber, uint8 depth, uint64 leafCount);
 ```
 
 **Modifiers:**
@@ -79,15 +78,15 @@ Send Arbitrum Sepolia ETH to the relayer address. You can get testnet ETH from a
 
 Local/default network:
 ```bash
-npx hardhat ignition deploy ignition/modules/SMTRootStorage.ts \
-  --parameters '{"SMTRootStorageModule": {"relayer": "0x<RELAYER_ADDRESS>"}}'
+npx hardhat ignition deploy ignition/modules/LeanIMTPlusRootStorage.ts \
+  --parameters '{"LeanIMTPlusRootStorageModule": {"relayer": "0x<RELAYER_ADDRESS>"}}'
 ```
 
 Arbitrum Sepolia (requires `ARB_SEPOLIA_RPC_URL` and `ARB_SEPOLIA_PRIVATE_KEY` env vars):
 ```bash
-npx hardhat ignition deploy ignition/modules/SMTRootStorage.ts \
+npx hardhat ignition deploy ignition/modules/LeanIMTPlusRootStorage.ts \
   --network arbitrumSepolia \
-  --parameters '{"SMTRootStorageModule": {"relayer": "0x<RELAYER_ADDRESS>"}}'
+  --parameters '{"LeanIMTPlusRootStorageModule": {"relayer": "0x<RELAYER_ADDRESS>"}}'
 ```
 
 ### 4. Configure GitHub Actions secrets
@@ -98,8 +97,8 @@ Set these repository secrets for automated on-chain posting:
 |--------|-------|
 | `RPC_URL` | Arbitrum Sepolia RPC endpoint (e.g. from Alchemy/Infura) |
 | `RELAYER_PRIVATE_KEY` | Hex private key without `0x` prefix |
-| `CONTRACT_ADDRESS` | Deployed `SMTRootStorage` contract address |
+| `CONTRACT_ADDRESS` | Deployed `LeanIMTPlusRootStorage` contract address |
 
 ## CI/CD Integration
 
-The `update-smt.yml` workflow posts roots on-chain automatically via `smtbuild --post-root` after building SMT snapshots. It reads `root.json` files and calls `SMTRootStorage.setRoot()` for each issuer. Skips gracefully when secrets are not configured (forks/PRs).
+The `update-smt.yml` workflow posts roots on-chain automatically via `smtbuild --post-root` after building LeanIMT+ snapshots. It reads `root.json` files and calls `LeanIMTPlusRootStorage.setRoot()` for each issuer. Skips gracefully when secrets are not configured (forks/PRs).

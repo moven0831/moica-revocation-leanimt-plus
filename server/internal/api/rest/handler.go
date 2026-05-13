@@ -9,17 +9,16 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/moven0831/moica-revocation-smt/server/internal/hexenc"
+	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
 	"github.com/moven0831/moica-revocation-smt/server/internal/manager"
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
 )
 
-// Handler holds the REST API dependencies.
 type Handler struct {
 	mgr       *manager.TreeManager
 	startTime time.Time
 }
 
-// NewHandler creates a new REST handler.
 func NewHandler(mgr *manager.TreeManager) *Handler {
 	return &Handler{
 		mgr:       mgr,
@@ -27,7 +26,6 @@ func NewHandler(mgr *manager.TreeManager) *Handler {
 	}
 }
 
-// Router returns a chi router with all REST endpoints.
 func (h *Handler) Router() chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -39,36 +37,31 @@ func (h *Handler) Router() chi.Router {
 	return r
 }
 
-// ProofResponse matches the TS API response format.
-type ProofResponse struct {
-	IssuerID      string   `json:"issuerId"`
-	SerialNumber  string   `json:"serialNumber"`
-	Entry         []string `json:"entry"`
-	MatchingEntry []string `json:"matchingEntry,omitempty"`
-	Siblings      []string `json:"siblings"`
-	Root          string   `json:"root"`
-	Membership    bool     `json:"membership"`
-	Depth         int      `json:"depth"`
+type LeafShape struct {
+	Value     string `json:"value"`
+	NextValue string `json:"nextValue"`
 }
 
-// StatusResponse matches the TS API status format.
+type ProofResponse struct {
+	IssuerID     string    `json:"issuerId"`
+	SerialNumber string    `json:"serialNumber"`
+	ProofType    int       `json:"proofType"`
+	Root         string    `json:"root"`
+	Value        string    `json:"value"`
+	Leaf         LeafShape `json:"leaf"`
+	LeafIndex    uint64    `json:"leafIndex"`
+	Siblings     []string  `json:"siblings"`
+}
+
 type StatusResponse struct {
 	Generations   map[string]manager.IssuerStatus `json:"generations"`
-	UptimeSeconds float64                          `json:"uptimeSeconds"`
-}
-
-func bigToHex(n *big.Int) string {
-	if n == nil || n.Sign() == 0 {
-		return "0x0"
-	}
-	return "0x" + n.Text(16)
+	UptimeSeconds float64                         `json:"uptimeSeconds"`
 }
 
 func (h *Handler) getProof(w http.ResponseWriter, r *http.Request) {
 	issuerID := chi.URLParam(r, "issuerId")
 	snHex := chi.URLParam(r, "sn")
 
-	// Validate serial number: must be hex, max 32 chars (128 bits)
 	snHex = strings.TrimPrefix(snHex, "0x")
 	if len(snHex) == 0 || len(snHex) > 32 {
 		http.Error(w, `{"error":"invalid serial number"}`, http.StatusBadRequest)
@@ -84,6 +77,8 @@ func (h *Handler) getProof(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if strings.Contains(err.Error(), "unknown issuer") {
 			http.Error(w, `{"error":"unknown issuer"}`, http.StatusNotFound)
+		} else if err == leanimt.ErrEmptyTree {
+			http.Error(w, `{"error":"tree is empty"}`, http.StatusServiceUnavailable)
 		} else {
 			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		}
@@ -93,14 +88,15 @@ func (h *Handler) getProof(w http.ResponseWriter, r *http.Request) {
 	resp := ProofResponse{
 		IssuerID:     issuerID,
 		SerialNumber: "0x" + snHex,
-		Entry:        bigSliceToHex(proof.Entry),
-		Siblings:     bigSliceToHex(proof.Siblings),
-		Root:         bigToHex(proof.Root),
-		Membership:   proof.Membership,
-		Depth:        smt.DefaultDepth,
-	}
-	if proof.MatchingEntry != nil {
-		resp.MatchingEntry = bigSliceToHex(proof.MatchingEntry)
+		ProofType:    int(proof.ProofType),
+		Root:         hexenc.Encode(proof.Root),
+		Value:        hexenc.Encode(proof.Value),
+		Leaf: LeafShape{
+			Value:     hexenc.Encode(proof.Leaf.Value),
+			NextValue: hexenc.Encode(proof.Leaf.NextValue),
+		},
+		LeafIndex: proof.LeafIndex,
+		Siblings:  hexenc.EncodeSlice(proof.Siblings),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -117,58 +113,42 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func bigSliceToHex(s []*big.Int) []string {
-	result := make([]string, len(s))
-	for i, v := range s {
-		result[i] = bigToHex(v)
+// VerifyProofFromResponse reconstructs a leanimt.Proof from the wire response
+// and runs full verification. Shared with the gRPC client and external
+// integration tests so the wire-shape parsing lives in one place.
+func VerifyProofFromResponse(h leanimt.Hasher, resp *ProofResponse) (bool, error) {
+	root, err := hexenc.Decode(resp.Root)
+	if err != nil {
+		return false, err
 	}
-	return result
-}
-
-// VerifyProofFromResponse is a helper to verify proofs returned by the API.
-// Exported for testing purposes.
-func VerifyProofFromResponse(h smt.Hasher, resp *ProofResponse, depth int) (bool, error) {
-	entry := make([]*big.Int, len(resp.Entry))
-	for i, s := range resp.Entry {
-		n, ok := new(big.Int).SetString(strings.TrimPrefix(s, "0x"), 16)
-		if !ok {
-			return false, nil
-		}
-		entry[i] = n
+	value, err := hexenc.Decode(resp.Value)
+	if err != nil {
+		return false, err
 	}
-
+	leafVal, err := hexenc.Decode(resp.Leaf.Value)
+	if err != nil {
+		return false, err
+	}
+	leafNext, err := hexenc.Decode(resp.Leaf.NextValue)
+	if err != nil {
+		return false, err
+	}
 	siblings := make([]*big.Int, len(resp.Siblings))
 	for i, s := range resp.Siblings {
-		n, ok := new(big.Int).SetString(strings.TrimPrefix(s, "0x"), 16)
-		if !ok {
-			return false, nil
+		n, err := hexenc.Decode(s)
+		if err != nil {
+			return false, err
 		}
 		siblings[i] = n
 	}
 
-	root, ok := new(big.Int).SetString(strings.TrimPrefix(resp.Root, "0x"), 16)
-	if !ok {
-		return false, nil
+	p := &leanimt.Proof{
+		ProofType: leanimt.ProofType(resp.ProofType),
+		Root:      root,
+		Value:     value,
+		Leaf:      leanimt.IndexedLeaf{Value: leafVal, NextValue: leafNext},
+		LeafIndex: resp.LeafIndex,
+		Siblings:  siblings,
 	}
-
-	proof := &smt.MerkleProof{
-		Entry:    entry,
-		Siblings: siblings,
-		Root:     root,
-		Membership: resp.Membership,
-	}
-
-	if resp.MatchingEntry != nil {
-		me := make([]*big.Int, len(resp.MatchingEntry))
-		for i, s := range resp.MatchingEntry {
-			n, ok := new(big.Int).SetString(strings.TrimPrefix(s, "0x"), 16)
-			if !ok {
-				return false, nil
-			}
-			me[i] = n
-		}
-		proof.MatchingEntry = me
-	}
-
-	return smt.VerifyProof(h, proof, depth), nil
+	return leanimt.VerifyProof(h, p), nil
 }

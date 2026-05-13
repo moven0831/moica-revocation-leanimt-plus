@@ -18,15 +18,15 @@ import (
 	"github.com/moven0831/moica-revocation-smt/server/internal/api/rest"
 	"github.com/moven0831/moica-revocation-smt/server/internal/config"
 	"github.com/moven0831/moica-revocation-smt/server/internal/crl"
+	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
 	"github.com/moven0831/moica-revocation-smt/server/internal/manager"
 	"github.com/moven0831/moica-revocation-smt/server/internal/snapshot"
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
 	pb "github.com/moven0831/moica-revocation-smt/server/pkg/proto/revocation"
 )
 
 func main() {
 	cfg := config.Load()
-	hasher := smt.NewPoseidonHasher()
+	hasher := leanimt.NewPoseidonHasher()
 	mgr := manager.New(hasher)
 
 	// Try loading snapshots for fast startup
@@ -51,7 +51,8 @@ func main() {
 			}
 		}
 		mgr.SetTree(iss.ID, tree, crlNum)
-		log.Printf("Loaded snapshot for %s: count=%d crlNumber=%d", iss.ID, tree.Count, crlNum)
+		log.Printf("Loaded snapshot for %s: size=%d depth=%d crlNumber=%d",
+			iss.ID, tree.Size(), tree.Depth(), crlNum)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

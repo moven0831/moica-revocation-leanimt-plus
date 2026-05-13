@@ -9,31 +9,22 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/moven0831/moica-revocation-smt/server/internal/hexenc"
 	"github.com/moven0831/moica-revocation-smt/server/internal/manager"
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
 	pb "github.com/moven0831/moica-revocation-smt/server/pkg/proto/revocation"
 )
 
-// RevocationServer implements the gRPC RevocationProofService.
 type RevocationServer struct {
 	pb.UnimplementedRevocationProofServiceServer
 	mgr       *manager.TreeManager
 	startTime time.Time
 }
 
-// NewRevocationServer creates a new gRPC server.
 func NewRevocationServer(mgr *manager.TreeManager) *RevocationServer {
 	return &RevocationServer{
 		mgr:       mgr,
 		startTime: time.Now(),
 	}
-}
-
-func bigToHex(n *big.Int) string {
-	if n == nil || n.Sign() == 0 {
-		return "0x0"
-	}
-	return "0x" + n.Text(16)
 }
 
 func (s *RevocationServer) GetProof(ctx context.Context, req *pb.GetProofRequest) (*pb.GetProofResponse, error) {
@@ -55,20 +46,19 @@ func (s *RevocationServer) GetProof(ctx context.Context, req *pb.GetProofRequest
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	resp := &pb.GetProofResponse{
+	return &pb.GetProofResponse{
 		IssuerId:     req.IssuerId,
 		SerialNumber: "0x" + snHex,
-		Entry:        bigSliceToHex(proof.Entry),
-		Siblings:     bigSliceToHex(proof.Siblings),
-		Root:         bigToHex(proof.Root),
-		Membership:   proof.Membership,
-		Depth:        int32(smt.DefaultDepth),
-	}
-	if proof.MatchingEntry != nil {
-		resp.MatchingEntry = bigSliceToHex(proof.MatchingEntry)
-	}
-
-	return resp, nil
+		ProofType:    uint32(proof.ProofType),
+		Root:         hexenc.Encode(proof.Root),
+		Value:        hexenc.Encode(proof.Value),
+		Leaf: &pb.IndexedLeaf{
+			Value:     hexenc.Encode(proof.Leaf.Value),
+			NextValue: hexenc.Encode(proof.Leaf.NextValue),
+		},
+		LeafIndex: proof.LeafIndex,
+		Siblings:  hexenc.EncodeSlice(proof.Siblings),
+	}, nil
 }
 
 func (s *RevocationServer) GetStatus(ctx context.Context, req *pb.GetStatusRequest) (*pb.GetStatusResponse, error) {
@@ -78,7 +68,9 @@ func (s *RevocationServer) GetStatus(ctx context.Context, req *pb.GetStatusReque
 	for id, st := range mgStatus {
 		generations[id] = &pb.IssuerStatus{
 			Loaded:    st.Loaded,
-			Count:     int32(st.Count),
+			Size:      int32(st.Size),
+			LeafCount: int32(st.LeafCount),
+			Depth:     int32(st.Depth),
 			Root:      st.Root,
 			CrlNumber: st.CRLNumber,
 			LoadedAt:  st.LoadedAt,
@@ -91,10 +83,3 @@ func (s *RevocationServer) GetStatus(ctx context.Context, req *pb.GetStatusReque
 	}, nil
 }
 
-func bigSliceToHex(s []*big.Int) []string {
-	result := make([]string, len(s))
-	for i, v := range s {
-		result[i] = bigToHex(v)
-	}
-	return result
-}

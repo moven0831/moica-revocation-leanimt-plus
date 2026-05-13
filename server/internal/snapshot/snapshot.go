@@ -9,85 +9,71 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
+	"github.com/moven0831/moica-revocation-smt/server/internal/hexenc"
+	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
 )
 
-// Snapshot represents the serialized form of an SMT.
-// Compatible with the TS tree-snapshot.json.gz format.
+const SnapshotVersion = 2
+
+// Snapshot is the v2 LeanIMT+ JSON-on-the-wire form. The Nodes grid is
+// [level][index], and Leaves[0] is the sentinel.
 type Snapshot struct {
-	Version int              `json:"version"`
-	Root    string           `json:"root"`
-	Count   int              `json:"count"`
-	Depth     int              `json:"depth,omitempty"`
-	CRLNumber uint64           `json:"crlNumber"`
-	Nodes     []NodeEntry      `json:"nodes"`
+	Version   int         `json:"version"`
+	Root      string      `json:"root"`
+	Depth     int         `json:"depth"`
+	LeafCount int         `json:"leafCount"`
+	Size      int         `json:"size"`
+	CRLNumber uint64      `json:"crlNumber"`
+	Nodes     [][]string  `json:"nodes"`
+	Leaves    []LeafEntry `json:"leaves"`
 }
 
-// NodeEntry is a [nodeHash, [children...]] pair.
-type NodeEntry struct {
-	Hash     string   `json:"hash"`
-	Children []string `json:"children"`
+type LeafEntry struct {
+	Value     string `json:"value"`
+	NextValue string `json:"nextValue"`
 }
 
-// bigToHex converts a big.Int to "0x"-prefixed hex string.
-func bigToHex(n *big.Int) string {
-	if n == nil || n.Sign() == 0 {
-		return "0x0"
+func Export(tree *leanimt.LeanIMTPlus, crlNumber uint64, w io.Writer) error {
+	nodes, leaves := tree.ExportState()
+
+	jsonNodes := make([][]string, len(nodes))
+	for lvl, level := range nodes {
+		jsonNodes[lvl] = make([]string, len(level))
+		for i, n := range level {
+			if n == nil {
+				jsonNodes[lvl][i] = ""
+			} else {
+				jsonNodes[lvl][i] = hexenc.Encode(n)
+			}
+		}
 	}
-	return "0x" + n.Text(16)
-}
-
-// hexToBig converts a "0x"-prefixed hex string to big.Int.
-func hexToBig(s string) (*big.Int, error) {
-	if len(s) >= 2 && s[:2] == "0x" {
-		s = s[2:]
+	jsonLeaves := make([]LeafEntry, len(leaves))
+	for i, l := range leaves {
+		jsonLeaves[i] = LeafEntry{Value: hexenc.Encode(l.Value), NextValue: hexenc.Encode(l.NextValue)}
 	}
-	n, ok := new(big.Int).SetString(s, 16)
-	if !ok {
-		return nil, fmt.Errorf("invalid hex: %s", s)
-	}
-	return n, nil
-}
 
-// Export writes the SMT as a gzip-compressed JSON snapshot.
-func Export(tree *smt.SMT, crlNumber uint64, w io.Writer) error {
-	nodes := tree.Nodes()
+	rootStr := hexenc.Encode(tree.Root())
 
-	snapshot := Snapshot{
-		Version:   1,
-		Root:      bigToHex(tree.Root),
-		Count:     tree.Count,
-		Depth:     tree.Depth,
+	snap := Snapshot{
+		Version:   SnapshotVersion,
+		Root:      rootStr,
+		Depth:     tree.Depth(),
+		LeafCount: tree.LeafCount(),
+		Size:      tree.Size(),
 		CRLNumber: crlNumber,
-		Nodes:     make([]NodeEntry, 0, len(nodes)),
-	}
-
-	for hash, children := range nodes {
-		hashBig, _ := new(big.Int).SetString(hash, 16)
-		entry := NodeEntry{
-			Hash:     bigToHex(hashBig),
-			Children: make([]string, len(children)),
-		}
-		for i, c := range children {
-			entry.Children[i] = bigToHex(c)
-		}
-		snapshot.Nodes = append(snapshot.Nodes, entry)
+		Nodes:     jsonNodes,
+		Leaves:    jsonLeaves,
 	}
 
 	gw := gzip.NewWriter(w)
 	defer gw.Close()
-
-	enc := json.NewEncoder(gw)
-	return enc.Encode(snapshot)
+	return json.NewEncoder(gw).Encode(snap)
 }
 
-// ExportFile atomically writes an SMT snapshot to the given path.
-// It writes to a temp file first, then renames for crash safety.
-func ExportFile(tree *smt.SMT, crlNumber uint64, path string) error {
+func ExportFile(tree *leanimt.LeanIMTPlus, crlNumber uint64, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-
 	f, err := os.CreateTemp(filepath.Dir(path), "snapshot-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create tmp: %w", err)
@@ -103,7 +89,6 @@ func ExportFile(tree *smt.SMT, crlNumber uint64, path string) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("close: %w", err)
 	}
-
 	if err := os.Rename(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("rename: %w", err)
@@ -111,8 +96,7 @@ func ExportFile(tree *smt.SMT, crlNumber uint64, path string) error {
 	return nil
 }
 
-// ImportFile opens a gzip-compressed JSON snapshot file and reconstructs an SMT.
-func ImportFile(h smt.Hasher, path string) (*smt.SMT, uint64, error) {
+func ImportFile(h leanimt.Hasher, path string) (*leanimt.LeanIMTPlus, uint64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, err
@@ -121,50 +105,56 @@ func ImportFile(h smt.Hasher, path string) (*smt.SMT, uint64, error) {
 	return Import(h, f)
 }
 
-// Import reads a gzip-compressed JSON snapshot and reconstructs an SMT.
-func Import(h smt.Hasher, r io.Reader) (*smt.SMT, uint64, error) {
+func Import(h leanimt.Hasher, r io.Reader) (*leanimt.LeanIMTPlus, uint64, error) {
 	gr, err := gzip.NewReader(r)
 	if err != nil {
 		return nil, 0, fmt.Errorf("gzip reader: %w", err)
 	}
 	defer gr.Close()
 
-	var snapshot Snapshot
-	if err := json.NewDecoder(gr).Decode(&snapshot); err != nil {
+	var snap Snapshot
+	if err := json.NewDecoder(gr).Decode(&snap); err != nil {
 		return nil, 0, fmt.Errorf("json decode: %w", err)
 	}
-
-	root, err := hexToBig(snapshot.Root)
-	if err != nil {
-		return nil, 0, fmt.Errorf("parse root: %w", err)
+	if snap.Version != SnapshotVersion {
+		return nil, 0, fmt.Errorf("unsupported snapshot version: %d (expected %d)", snap.Version, SnapshotVersion)
+	}
+	if snap.Depth < 0 || (len(snap.Nodes) > 0 && snap.Depth != len(snap.Nodes)-1) {
+		return nil, 0, fmt.Errorf("snapshot depth %d disagrees with %d node levels", snap.Depth, len(snap.Nodes))
 	}
 
-	depth := snapshot.Depth
-	if depth == 0 {
-		depth = smt.DefaultDepth
-	}
-
-	nodes := make(map[string]smt.ChildNodes, len(snapshot.Nodes))
-	for _, entry := range snapshot.Nodes {
-		hashBig, err := hexToBig(entry.Hash)
-		if err != nil {
-			return nil, 0, fmt.Errorf("parse node hash: %w", err)
-		}
-
-		children := make(smt.ChildNodes, len(entry.Children))
-		for i, c := range entry.Children {
-			children[i], err = hexToBig(c)
-			if err != nil {
-				return nil, 0, fmt.Errorf("parse child: %w", err)
+	nodes := make([][]*big.Int, len(snap.Nodes))
+	for lvl, level := range snap.Nodes {
+		nodes[lvl] = make([]*big.Int, len(level))
+		for i, s := range level {
+			if s == "" {
+				continue
 			}
+			n, err := hexenc.Decode(s)
+			if err != nil {
+				return nil, 0, fmt.Errorf("nodes[%d][%d]: %w", lvl, i, err)
+			}
+			nodes[lvl][i] = n
 		}
-
-		key := hashBig.Text(16)
-		nodes[key] = children
+	}
+	leaves := make([]leanimt.IndexedLeaf, len(snap.Leaves))
+	for i, l := range snap.Leaves {
+		v, err := hexenc.Decode(l.Value)
+		if err != nil {
+			return nil, 0, fmt.Errorf("leaves[%d].value: %w", i, err)
+		}
+		nv, err := hexenc.Decode(l.NextValue)
+		if err != nil {
+			return nil, 0, fmt.Errorf("leaves[%d].nextValue: %w", i, err)
+		}
+		leaves[i] = leanimt.IndexedLeaf{Value: v, NextValue: nv}
 	}
 
-	tree := smt.NewWithDepth(h, depth)
-	tree.SetNodes(nodes, root, snapshot.Count)
-
-	return tree, snapshot.CRLNumber, nil
+	tree := leanimt.New(h)
+	if len(leaves) > 0 {
+		if err := tree.ImportState(nodes, leaves); err != nil {
+			return nil, 0, fmt.Errorf("import state: %w", err)
+		}
+	}
+	return tree, snap.CRLNumber, nil
 }

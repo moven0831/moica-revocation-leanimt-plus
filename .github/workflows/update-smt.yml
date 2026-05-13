@@ -1,4 +1,4 @@
-name: Update SMT
+name: Update LeanIMT+
 
 on:
   schedule:
@@ -12,9 +12,9 @@ on:
 
 jobs:
   update:
-    name: Fetch CRL & Update SMT
+    name: Fetch CRL & Update LeanIMT+
     runs-on: ubuntu-latest
-    environment: SMTRootStorageModule
+    environment: LeanIMTPlusRootStorageModule
     permissions:
       contents: write
     defaults:
@@ -33,7 +33,7 @@ jobs:
       - name: Build WASM
         run: GOOS=js GOARCH=wasm go build -o wasm/smt.wasm ./wasm/
 
-      - name: Fetch CRL & Build SMT
+      - name: Fetch CRL & Build LeanIMT+
         id: build
         run: ./bin/smtbuild --binary
         env:
@@ -81,7 +81,7 @@ jobs:
         run: |
           gh release delete snapshot-latest --yes || true
           assets=""
-          notes="Auto-updated SMT snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)"$'\n\n'
+          notes="Auto-updated LeanIMT+ snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)"$'\n\n'
           for gen in g2 g3; do
             src="data/${gen}/tree-snapshot.json.gz"
             bin_src="data/${gen}/tree-snapshot.bin.gz"
@@ -98,12 +98,14 @@ jobs:
             fi
             if [ -f "$root_file" ]; then
               root=$(jq -r '.root' "$root_file")
-              count=$(jq -r '.count' "$root_file")
+              size=$(jq -r '.size' "$root_file")
+              depth=$(jq -r '.depth' "$root_file")
               crl=$(jq -r '.crlNumber' "$root_file")
               ts=$(jq -r '.timestamp' "$root_file")
               notes+="### ${gen^^}"$'\n'
               notes+="- **Root:** \`${root}\`"$'\n'
-              notes+="- **Count:** ${count}"$'\n'
+              notes+="- **Size:** ${size}"$'\n'
+              notes+="- **Depth:** ${depth}"$'\n'
               notes+="- **CRL Number:** ${crl}"$'\n'
               notes+="- **Updated:** ${ts}"$'\n\n'
             fi
@@ -120,7 +122,7 @@ jobs:
           fi
           if [ -n "$assets" ]; then
             gh release create snapshot-latest \
-              --title "SMT Snapshot" \
+              --title "LeanIMT+ Snapshot" \
               --notes "$notes" \
               $assets
           fi

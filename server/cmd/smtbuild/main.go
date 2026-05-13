@@ -15,7 +15,7 @@ import (
 	"github.com/moven0831/moica-revocation-smt/server/internal/chain"
 	"github.com/moven0831/moica-revocation-smt/server/internal/config"
 	"github.com/moven0831/moica-revocation-smt/server/internal/crl"
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
+	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
 	"github.com/moven0831/moica-revocation-smt/server/internal/snapshot"
 )
 
@@ -26,13 +26,15 @@ type issuer struct {
 
 type rootInfo struct {
 	Root      string `json:"root"`
-	Count     int    `json:"count"`
+	Size      int    `json:"size"`
+	LeafCount int    `json:"leafCount"`
+	Depth     int    `json:"depth"`
 	CRLNumber string `json:"crlNumber"`
 	Timestamp string `json:"timestamp"`
 }
 
 func main() {
-	postRoot := flag.Bool("post-root", false, "Post SMT roots on-chain (reads root.json files, skips SMT build)")
+	postRoot := flag.Bool("post-root", false, "Post LeanIMT+ roots on-chain (reads root.json files, skips tree build)")
 	exportBinary := flag.Bool("binary", false, "Also export binary format snapshot alongside JSON")
 	convertBinary := flag.String("convert-binary", "", "Convert JSON snapshot to binary format (path to .json.gz input)")
 	flag.Parse()
@@ -54,8 +56,7 @@ func main() {
 		{ID: "g3", URL: cfg.CRLG3URL},
 	}
 
-	hasher := smt.NewPoseidonHasher()
-	entryVal := big.NewInt(1)
+	hasher := leanimt.NewPoseidonHasher()
 	anyChanged := false
 
 	for _, iss := range issuers {
@@ -75,118 +76,37 @@ func main() {
 		log.Printf("[%s] Parsed %d revoked serials (CRLNumber=%s)",
 			iss.ID, len(parsed.RevokedSerials), parsed.CRLNumber)
 
-		// Deduplicate serials
-		seen := make(map[string]struct{}, len(parsed.RevokedSerials))
-		uniqueSerials := make([]*big.Int, 0, len(parsed.RevokedSerials))
-		for _, s := range parsed.RevokedSerials {
-			key := s.Text(16)
-			if _, dup := seen[key]; !dup {
-				seen[key] = struct{}{}
-				uniqueSerials = append(uniqueSerials, s)
-			}
-		}
-		log.Printf("[%s] %d unique serials (removed %d duplicates)",
-			iss.ID, len(uniqueSerials), len(parsed.RevokedSerials)-len(uniqueSerials))
+		serials := crl.DedupAndSortSerials(parsed.RevokedSerials)
+		log.Printf("[%s] %d unique sorted serials", iss.ID, len(serials))
 
-		// Try loading existing snapshot for incremental update
-		var tree *smt.SMT
 		buildStart := time.Now()
-		issuerDir := filepath.Join(cfg.DataDir, iss.ID)
-		snapshotPath := filepath.Join(issuerDir, "tree-snapshot.json.gz")
-
-		var existingCRLNum uint64
-		tree, existingCRLNum, err = snapshot.ImportFile(hasher, snapshotPath)
-		if err != nil {
-			log.Printf("[%s] No local snapshot, trying GitHub Release", iss.ID)
-			if dlPath, dlErr := snapshot.Download(cfg.GitHubRepo, iss.ID, cfg.DataDir); dlErr == nil {
-				tree, existingCRLNum, err = snapshot.ImportFile(hasher, dlPath)
-				if err != nil {
-					log.Printf("[%s] Failed to import downloaded snapshot: %v", iss.ID, err)
-				}
-			} else {
-				log.Printf("[%s] No snapshot available: %v", iss.ID, dlErr)
-			}
-		}
-
-		if tree != nil && tree.Count > 0 {
-			// Incremental update: compute delta
-			existingKeys := tree.Keys()
-			existingSet := make(map[string]struct{}, len(existingKeys))
-			for _, k := range existingKeys {
-				existingSet[k.Text(16)] = struct{}{}
-			}
-
-			newSet := make(map[string]struct{}, len(uniqueSerials))
-			for _, s := range uniqueSerials {
-				newSet[s.Text(16)] = struct{}{}
-			}
-
-			// Compute toAdd: in new but not existing
-			var toAdd []*big.Int
-			for _, s := range uniqueSerials {
-				if _, ok := existingSet[s.Text(16)]; !ok {
-					toAdd = append(toAdd, s)
-				}
-			}
-
-			// Compute toDelete: in existing but not new
-			var toDelete []*big.Int
-			for _, k := range existingKeys {
-				if _, ok := newSet[k.Text(16)]; !ok {
-					toDelete = append(toDelete, k)
-				}
-			}
-
-			if len(toAdd) == 0 && len(toDelete) == 0 {
-				log.Printf("[%s] No changes detected, skipping", iss.ID)
-				continue
-			}
-
-			log.Printf("[%s] Incremental: +%d adds, -%d deletes (from %d existing)",
-				iss.ID, len(toAdd), len(toDelete), len(existingKeys))
-
-			if len(toDelete) > 0 {
-				if err := tree.BatchDelete(toDelete); err != nil {
-					log.Printf("[%s] Skipping: batch delete error: %v", iss.ID, err)
-					continue
-				}
-			}
-
-			if len(toAdd) > 0 {
-				err = tree.BatchAddWithProgress(toAdd, entryVal, 10000, func(done, total int) {
-					log.Printf("[%s] Added %d / %d entries", iss.ID, done, total)
-				})
-				if err != nil {
-					log.Printf("[%s] Skipping: batch add error: %v", iss.ID, err)
-					continue
-				}
-			}
-		} else {
-			// Full rebuild
-			tree = smt.New(hasher)
-			log.Printf("[%s] Full rebuild: %d entries", iss.ID, len(uniqueSerials))
-			err = tree.BatchAddWithProgress(uniqueSerials, entryVal, 10000, func(done, total int) {
-				log.Printf("[%s] Added %d / %d entries", iss.ID, done, total)
+		tree := leanimt.New(hasher)
+		if len(serials) > 0 {
+			err = tree.InsertManyWithProgress(serials, 10_000, func(done, total int) {
+				log.Printf("[%s] Inserted %d / %d", iss.ID, done, total)
 			})
 			if err != nil {
-				log.Printf("[%s] Skipping: batch add error: %v", iss.ID, err)
+				log.Printf("[%s] Skipping: build error: %v", iss.ID, err)
 				continue
 			}
 		}
-		log.Printf("[%s] SMT ready: count=%d, root=0x%s, duration=%v",
-			iss.ID, tree.Count, tree.Root.Text(16), time.Since(buildStart))
+		rootHex := "0x0"
+		if r := tree.Root(); r != nil {
+			rootHex = "0x" + r.Text(16)
+		}
+		log.Printf("[%s] Tree ready: size=%d depth=%d root=%s duration=%v",
+			iss.ID, tree.Size(), tree.Depth(), rootHex, time.Since(buildStart))
 
-		// Check if root changed
-		newRoot := "0x" + tree.Root.Text(16)
+		issuerDir := filepath.Join(cfg.DataDir, iss.ID)
 		rootPath := filepath.Join(issuerDir, "root.json")
 		if existingRoot, err := readExistingRoot(rootPath); err == nil {
-			if existingRoot == newRoot && existingCRLNum > 0 {
+			if existingRoot == rootHex {
 				log.Printf("[%s] Root unchanged, skipping snapshot export", iss.ID)
 				continue
 			}
 		}
 
-		// Export snapshot (atomic write via temp file + rename)
+		snapshotPath := filepath.Join(issuerDir, "tree-snapshot.json.gz")
 		if err := snapshot.ExportFile(tree, parsed.CRLNumber.Uint64(), snapshotPath); err != nil {
 			log.Printf("[%s] Skipping: export snapshot: %v", iss.ID, err)
 			continue
@@ -202,10 +122,11 @@ func main() {
 			}
 		}
 
-		// Write root.json
 		info := rootInfo{
-			Root:      newRoot,
-			Count:     tree.Count,
+			Root:      rootHex,
+			Size:      tree.Size(),
+			LeafCount: tree.LeafCount(),
+			Depth:     tree.Depth(),
 			CRLNumber: parsed.CRLNumber.String(),
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		}
@@ -223,7 +144,6 @@ func main() {
 		anyChanged = true
 	}
 
-	// Write changed output for GitHub Actions
 	if ghOutput := os.Getenv("GITHUB_OUTPUT"); ghOutput != "" {
 		f, err := os.OpenFile(ghOutput, os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
@@ -234,7 +154,7 @@ func main() {
 	}
 
 	if anyChanged {
-		log.Println("Done — SMT data updated")
+		log.Println("Done — LeanIMT+ data updated")
 	} else {
 		log.Println("Done — no changes")
 	}
@@ -302,8 +222,18 @@ func postRootOnChain(cfg *config.Config) {
 			continue
 		}
 
-		log.Printf("[%s] Posting root on-chain: root=%s crlNumber=%s", iss.ID, info.Root, info.CRLNumber)
-		tx, err := relayer.PostRoot(ctx, iss.IssuerID, root, crlNumber)
+		if info.Depth < 0 || info.Depth > 255 {
+			log.Printf("[%s] Skipping: depth %d out of uint8 range", iss.ID, info.Depth)
+			continue
+		}
+		if info.LeafCount < 0 {
+			log.Printf("[%s] Skipping: negative leafCount %d", iss.ID, info.LeafCount)
+			continue
+		}
+
+		log.Printf("[%s] Posting root on-chain: root=%s crlNumber=%s depth=%d leafCount=%d",
+			iss.ID, info.Root, info.CRLNumber, info.Depth, info.LeafCount)
+		tx, err := relayer.PostRoot(ctx, iss.IssuerID, root, crlNumber, uint8(info.Depth), uint64(info.LeafCount))
 		if err != nil {
 			if strings.Contains(err.Error(), "stale CRL") {
 				log.Printf("[%s] Already posted (stale CRL), skipping", iss.ID)
@@ -319,27 +249,28 @@ func postRootOnChain(cfg *config.Config) {
 }
 
 func convertJSONToBinary(jsonPath string) {
-	hasher := smt.NewPoseidonHasher()
+	hasher := leanimt.NewPoseidonHasher()
 
 	log.Printf("Loading JSON snapshot from %s", jsonPath)
 	tree, crlNumber, err := snapshot.ImportFile(hasher, jsonPath)
 	if err != nil {
 		log.Fatalf("Failed to import JSON snapshot: %v", err)
 	}
-	rootHex := tree.Root.Text(16)
-	if len(rootHex) > 16 {
-		rootHex = rootHex[:16]
+	rootHex := "0x0"
+	if r := tree.Root(); r != nil {
+		rootHex = r.Text(16)
+		if len(rootHex) > 16 {
+			rootHex = rootHex[:16]
+		}
 	}
-	log.Printf("Loaded: %d entries, root=0x%s, CRL#%d", tree.Count, rootHex, crlNumber)
+	log.Printf("Loaded: size=%d depth=%d root=0x%s, CRL#%d", tree.Size(), tree.Depth(), rootHex, crlNumber)
 
-	// Output path: same directory, replace .json.gz with .bin.gz
 	outPath := strings.TrimSuffix(jsonPath, ".json.gz") + ".bin.gz"
 	log.Printf("Exporting binary snapshot to %s", outPath)
 	if err := snapshot.ExportBinaryFile(tree, crlNumber, outPath); err != nil {
 		log.Fatalf("Failed to export binary: %v", err)
 	}
 
-	// Report sizes
 	jsonInfo, _ := os.Stat(jsonPath)
 	binInfo, _ := os.Stat(outPath)
 	if jsonInfo != nil && binInfo != nil {

@@ -3,34 +3,30 @@ package crl
 import (
 	"context"
 	"log"
-	"math/big"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
 	"github.com/moven0831/moica-revocation-smt/server/internal/manager"
 	"github.com/moven0831/moica-revocation-smt/server/internal/snapshot"
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
 )
 
-// IssuerConfig holds the configuration for one issuer's CRL.
 type IssuerConfig struct {
 	ID  string
 	URL string
 }
 
-// Watcher periodically fetches CRLs and rebuilds SMTs.
 type Watcher struct {
 	interval time.Duration
 	issuers  []IssuerConfig
 	mgr      *manager.TreeManager
-	hasher   smt.Hasher
+	hasher   leanimt.Hasher
 	dataDir  string
 	wg       sync.WaitGroup
 }
 
-// NewWatcher creates a CRL watcher that polls at the given interval.
-func NewWatcher(interval time.Duration, issuers []IssuerConfig, mgr *manager.TreeManager, hasher smt.Hasher, dataDir string) *Watcher {
+func NewWatcher(interval time.Duration, issuers []IssuerConfig, mgr *manager.TreeManager, hasher leanimt.Hasher, dataDir string) *Watcher {
 	return &Watcher{
 		interval: interval,
 		issuers:  issuers,
@@ -40,12 +36,9 @@ func NewWatcher(interval time.Duration, issuers []IssuerConfig, mgr *manager.Tre
 	}
 }
 
-// Wait blocks until all background export goroutines have finished.
 func (w *Watcher) Wait() { w.wg.Wait() }
 
-// Start begins the periodic CRL polling loop. Blocks until ctx is cancelled.
 func (w *Watcher) Start(ctx context.Context) {
-	// Initial fetch
 	w.fetchAll()
 
 	ticker := time.NewTicker(w.interval)
@@ -82,7 +75,6 @@ func (w *Watcher) fetchAndRebuild(issuer IssuerConfig) error {
 		return err
 	}
 
-	// Check if CRL number is newer than what we have
 	existing, _ := w.mgr.GetTree(issuer.ID)
 	if existing != nil && parsed.CRLNumber != nil {
 		if parsed.CRLNumber.Uint64() <= existing.CRLNumber {
@@ -92,13 +84,13 @@ func (w *Watcher) fetchAndRebuild(issuer IssuerConfig) error {
 		}
 	}
 
-	log.Printf("Building SMT for %s with %d revoked serials", issuer.ID, len(parsed.RevokedSerials))
+	serials := DedupAndSortSerials(parsed.RevokedSerials)
+	log.Printf("Building LeanIMT+ for %s with %d unique sorted serials", issuer.ID, len(serials))
 
-	tree := smt.New(w.hasher)
-	for _, serial := range parsed.RevokedSerials {
-		if err := tree.Add(serial, big.NewInt(1)); err != nil {
-			// Skip duplicates
-			continue
+	tree := leanimt.New(w.hasher)
+	if len(serials) > 0 {
+		if err := tree.InsertManySorted(serials); err != nil {
+			return err
 		}
 	}
 
@@ -108,10 +100,16 @@ func (w *Watcher) fetchAndRebuild(issuer IssuerConfig) error {
 	}
 
 	w.mgr.SetTree(issuer.ID, tree, crlNum)
-	log.Printf("SMT for %s loaded: root=%s count=%d crl=%d",
-		issuer.ID, tree.Root.Text(16)[:16]+"...", tree.Count, crlNum)
+	rootStr := "nil"
+	if r := tree.Root(); r != nil {
+		rootStr = r.Text(16)
+		if len(rootStr) > 16 {
+			rootStr = rootStr[:16] + "..."
+		}
+	}
+	log.Printf("LeanIMT+ for %s loaded: root=%s size=%d depth=%d crl=%d",
+		issuer.ID, rootStr, tree.Size(), tree.Depth(), crlNum)
 
-	// Persist snapshot to disk so future restarts load fresh data instantly
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()

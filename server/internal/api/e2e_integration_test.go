@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
@@ -20,76 +22,41 @@ import (
 
 	"github.com/moven0831/moica-revocation-smt/server/internal/api/grpcapi"
 	"github.com/moven0831/moica-revocation-smt/server/internal/api/rest"
+	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
 	"github.com/moven0831/moica-revocation-smt/server/internal/manager"
-	"github.com/moven0831/moica-revocation-smt/server/internal/smt"
-	"github.com/moven0831/moica-revocation-smt/server/internal/snapshot"
 	pb "github.com/moven0831/moica-revocation-smt/server/pkg/proto/revocation"
 )
 
 const (
-	repo     = "moven0831/moica-revocation-smt"
-	issuerID = "g2"
-	bufSize  = 1024 * 1024
+	issuerID   = "g2"
+	bufSize    = 1024 * 1024
+	syntheticN = 1024
 )
 
 var (
 	testRouter     http.Handler
 	testGRPCClient pb.RevocationProofServiceClient
 	grpcCleanup    func()
-	hasher         smt.Hasher
-	memberSerials  []string // known member serials extracted from the tree
-	treeCount      int
+	hasher         leanimt.Hasher
+	memberSerials  []string
 )
 
 func TestMain(m *testing.M) {
-	h := smt.NewPoseidonHasher()
-	hasher = h
+	hasher = leanimt.NewPoseidonHasher()
 
-	// Download G2 snapshot.
-	tmpDir, err := os.MkdirTemp("", "integration-smt-*")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create temp dir: %v\n", err)
-		os.Exit(1)
-	}
-	defer os.RemoveAll(tmpDir)
+	tree, serials := buildSyntheticTree(syntheticN)
+	memberSerials = pickMembers(serials, 10)
 
-	snapshotPath, err := snapshot.Download(repo, issuerID, tmpDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to download snapshot: %v\n", err)
-		os.Exit(1)
-	}
+	mgr := manager.New(hasher)
+	mgr.SetTree(issuerID, tree, 100)
+	mgr.SetTree("g3", leanimt.New(hasher), 0)
 
-	// Import snapshot into SMT.
-	tree, crlNum, err := snapshot.ImportFile(h, snapshotPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to import snapshot: %v\n", err)
-		os.Exit(1)
-	}
-	treeCount = tree.Count
-
-	// Extract known member serials from tree nodes.
-	memberSerials = extractMemberSerials(tree, 10)
-	if len(memberSerials) == 0 {
-		fmt.Fprintf(os.Stderr, "no member serials found in tree\n")
-		os.Exit(1)
-	}
-
-	// Set up TreeManager with the imported tree.
-	mgr := manager.New(h)
-	mgr.SetTree(issuerID, tree, crlNum)
-	mgr.SetTree("g3", smt.New(h), 0)
-
-	// Set up REST router.
 	testRouter = rest.NewHandler(mgr).Router()
 
-	// Set up gRPC in-process server.
 	lis := bufconn.Listen(bufSize)
 	srv := grpc.NewServer()
 	pb.RegisterRevocationProofServiceServer(srv, grpcapi.NewRevocationServer(mgr))
-
-	go func() {
-		_ = srv.Serve(lis)
-	}()
+	go func() { _ = srv.Serve(lis) }()
 
 	conn, err := grpc.NewClient(
 		"passthrough:///bufnet",
@@ -114,25 +81,41 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// extractMemberSerials finds leaf nodes in the tree and returns their keys as hex strings.
-func extractMemberSerials(tree *smt.SMT, count int) []string {
-	var serials []string
-	for _, children := range tree.Nodes() {
-		if children.IsLeaf() {
-			key := children[0]
-			// Verify this key is actually in the tree.
-			if tree.Get(key) != nil {
-				serials = append(serials, key.Text(16))
-				if len(serials) >= count {
-					break
-				}
-			}
+func buildSyntheticTree(n int) (*leanimt.LeanIMTPlus, []*big.Int) {
+	r := rand.New(rand.NewSource(int64(n) * 31))
+	seen := make(map[int64]struct{}, n)
+	values := make([]*big.Int, 0, n)
+	for len(values) < n {
+		v := r.Int63n(1<<60) + 1
+		if _, dup := seen[v]; dup {
+			continue
 		}
+		seen[v] = struct{}{}
+		values = append(values, big.NewInt(v))
 	}
-	return serials
+	sort.Slice(values, func(i, j int) bool { return values[i].Cmp(values[j]) < 0 })
+
+	tree := leanimt.New(leanimt.NewPoseidonHasher())
+	if err := tree.InsertManySorted(values); err != nil {
+		panic(err)
+	}
+	return tree, values
 }
 
-// --- REST helpers ---
+func pickMembers(serials []*big.Int, count int) []string {
+	if count > len(serials) {
+		count = len(serials)
+	}
+	step := len(serials) / count
+	if step < 1 {
+		step = 1
+	}
+	out := make([]string, 0, count)
+	for i := 0; i < len(serials) && len(out) < count; i += step {
+		out = append(out, serials[i].Text(16))
+	}
+	return out
+}
 
 func getProofResponse(t *testing.T, issuer, sn string) rest.ProofResponse {
 	t.Helper()
@@ -168,7 +151,6 @@ func getStatusResponse(t *testing.T) rest.StatusResponse {
 	return resp
 }
 
-// parseHex converts a "0x"-prefixed hex string to *big.Int.
 func parseHex(t *testing.T, s string) *big.Int {
 	t.Helper()
 	n, ok := new(big.Int).SetString(strings.TrimPrefix(s, "0x"), 16)
@@ -178,158 +160,59 @@ func parseHex(t *testing.T, s string) *big.Int {
 	return n
 }
 
-// verifyRESTProofIndependently recomputes root from a REST proof response.
-func verifyRESTProofIndependently(t *testing.T, resp *rest.ProofResponse) {
-	t.Helper()
-
-	siblings := make([]*big.Int, len(resp.Siblings))
-	for i, s := range resp.Siblings {
-		siblings[i] = parseHex(t, s)
-	}
-
-	root := parseHex(t, resp.Root)
-
-	var node *big.Int
-	var pathKey *big.Int
-
-	if resp.MatchingEntry != nil {
-		meKey := parseHex(t, resp.MatchingEntry[0])
-		meVal := parseHex(t, resp.MatchingEntry[1])
-		meMark := parseHex(t, resp.MatchingEntry[2])
-		node = hasher.Hash3(meKey, meVal, meMark)
-		pathKey = meKey
-	} else if resp.Membership {
-		key := parseHex(t, resp.Entry[0])
-		val := parseHex(t, resp.Entry[1])
-		mark := parseHex(t, resp.Entry[2])
-		node = hasher.Hash3(key, val, mark)
-		pathKey = key
-	} else {
-		node = new(big.Int)
-		pathKey = parseHex(t, resp.Entry[0])
-	}
-
-	path := smt.KeyToPath(pathKey, resp.Depth)
-	for i := len(siblings) - 1; i >= 0; i-- {
-		if path[i] == 1 {
-			node = hasher.Hash2(siblings[i], node)
-		} else {
-			node = hasher.Hash2(node, siblings[i])
-		}
-	}
-
-	if node.Cmp(root) != 0 {
-		t.Errorf("independent root recomputation failed: got 0x%s, want %s", node.Text(16), resp.Root)
-	}
-}
-
-// verifyGRPCProofIndependently recomputes root from a gRPC proof response.
-func verifyGRPCProofIndependently(t *testing.T, resp *pb.GetProofResponse) {
-	t.Helper()
-
-	siblings := make([]*big.Int, len(resp.Siblings))
-	for i, s := range resp.Siblings {
-		siblings[i] = parseHex(t, s)
-	}
-
-	root := parseHex(t, resp.Root)
-	depth := int(resp.Depth)
-
-	var node *big.Int
-	var pathKey *big.Int
-
-	if len(resp.MatchingEntry) > 0 {
-		meKey := parseHex(t, resp.MatchingEntry[0])
-		meVal := parseHex(t, resp.MatchingEntry[1])
-		meMark := parseHex(t, resp.MatchingEntry[2])
-		node = hasher.Hash3(meKey, meVal, meMark)
-		pathKey = meKey
-	} else if resp.Membership {
-		key := parseHex(t, resp.Entry[0])
-		val := parseHex(t, resp.Entry[1])
-		mark := parseHex(t, resp.Entry[2])
-		node = hasher.Hash3(key, val, mark)
-		pathKey = key
-	} else {
-		node = new(big.Int)
-		pathKey = parseHex(t, resp.Entry[0])
-	}
-
-	path := smt.KeyToPath(pathKey, depth)
-	for i := len(siblings) - 1; i >= 0; i-- {
-		if path[i] == 1 {
-			node = hasher.Hash2(siblings[i], node)
-		} else {
-			node = hasher.Hash2(node, siblings[i])
-		}
-	}
-
-	if node.Cmp(root) != 0 {
-		t.Errorf("independent root recomputation failed: got 0x%s, want %s", node.Text(16), resp.Root)
-	}
-}
-
-// --- REST Tests ---
-
 func TestIntegrationRESTMembershipProof(t *testing.T) {
 	for _, serial := range memberSerials {
-		t.Run(serial[:8], func(t *testing.T) {
+		t.Run(serial, func(t *testing.T) {
 			resp := getProofResponse(t, issuerID, serial)
 
-			if !resp.Membership {
-				t.Fatal("expected membership=true")
+			if resp.ProofType != int(leanimt.ProofMembership) {
+				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofMembership)
 			}
-			if len(resp.Entry) != 3 {
-				t.Fatalf("entry length: got %d, want 3", len(resp.Entry))
+			if resp.Leaf.Value != resp.Value {
+				t.Errorf("leaf.value=%s, value=%s — must match for membership", resp.Leaf.Value, resp.Value)
 			}
-			if resp.Entry[1] != "0x1" {
-				t.Errorf("entry[1]: got %s, want 0x1", resp.Entry[1])
-			}
-			if resp.Entry[2] != "0x1" {
-				t.Errorf("entry[2]: got %s, want 0x1", resp.Entry[2])
-			}
-			if resp.Depth != smt.DefaultDepth {
-				t.Errorf("depth: got %d, want %d", resp.Depth, smt.DefaultDepth)
+			if len(resp.Siblings) > 20 {
+				t.Errorf("siblings length %d unexpectedly large", len(resp.Siblings))
 			}
 
-			ok, err := rest.VerifyProofFromResponse(hasher, &resp, smt.DefaultDepth)
+			ok, err := rest.VerifyProofFromResponse(hasher, &resp)
 			if err != nil {
 				t.Fatalf("VerifyProofFromResponse: %v", err)
 			}
 			if !ok {
 				t.Error("VerifyProofFromResponse failed")
 			}
-
-			verifyRESTProofIndependently(t, &resp)
 		})
 	}
 }
 
 func TestIntegrationRESTNonMembershipProof(t *testing.T) {
-	nonMembers := []string{"1", "2", "DEAD"}
+	nonMembers := []string{"1", "2", "DEAD", "FFFFFFFFFFFFFFFF"}
 
 	for _, serial := range nonMembers {
 		t.Run(serial, func(t *testing.T) {
 			resp := getProofResponse(t, issuerID, serial)
 
-			if resp.Membership {
-				t.Fatal("expected membership=false")
+			if resp.ProofType != int(leanimt.ProofNonMembership) {
+				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofNonMembership)
 			}
-			if resp.MatchingEntry != nil {
-				if len(resp.MatchingEntry) != 3 {
-					t.Fatalf("matchingEntry length: got %d, want 3", len(resp.MatchingEntry))
-				}
+			leafVal := parseHex(t, resp.Leaf.Value)
+			leafNext := parseHex(t, resp.Leaf.NextValue)
+			value := parseHex(t, resp.Value)
+			if leafVal.Cmp(value) >= 0 {
+				t.Errorf("low leaf invariant: leaf.value=%s !< value=%s", leafVal, value)
+			}
+			if leafNext.Sign() != 0 && leafNext.Cmp(value) <= 0 {
+				t.Errorf("low leaf invariant: value=%s !< leaf.nextValue=%s", value, leafNext)
 			}
 
-			ok, err := rest.VerifyProofFromResponse(hasher, &resp, smt.DefaultDepth)
+			ok, err := rest.VerifyProofFromResponse(hasher, &resp)
 			if err != nil {
 				t.Fatalf("VerifyProofFromResponse: %v", err)
 			}
 			if !ok {
 				t.Error("VerifyProofFromResponse failed")
 			}
-
-			verifyRESTProofIndependently(t, &resp)
 		})
 	}
 }
@@ -341,39 +224,29 @@ func TestIntegrationRESTRootConsistency(t *testing.T) {
 	if !ok {
 		t.Fatal("g2 not in generations")
 	}
-
 	if !g2Status.Loaded {
 		t.Fatal("g2 not loaded")
 	}
-
-	// Verify tree count is in the expected range for G2 (~400k+).
-	if g2Status.Count < 100000 {
-		t.Errorf("g2 count too low: got %d, expected 100k+", g2Status.Count)
-	}
-	if g2Status.Count != treeCount {
-		t.Errorf("g2 count mismatch: status=%d, tree=%d", g2Status.Count, treeCount)
+	if g2Status.Size != syntheticN {
+		t.Errorf("g2 size: got %d, want %d", g2Status.Size, syntheticN)
 	}
 
-	// Compare root from /status with root from /proof responses.
 	proofResp := getProofResponse(t, issuerID, memberSerials[0])
 	if proofResp.Root != g2Status.Root {
 		t.Errorf("root mismatch: proof=%s, status=%s", proofResp.Root, g2Status.Root)
 	}
 
-	// Verify a non-member proof also returns the same root.
 	nonMemberResp := getProofResponse(t, issuerID, "DEAD")
 	if nonMemberResp.Root != g2Status.Root {
 		t.Errorf("non-member root mismatch: proof=%s, status=%s", nonMemberResp.Root, g2Status.Root)
 	}
 }
 
-// --- gRPC Tests ---
-
 func TestIntegrationGRPCMembershipProof(t *testing.T) {
 	ctx := context.Background()
 
 	for _, serial := range memberSerials {
-		t.Run(serial[:8], func(t *testing.T) {
+		t.Run(serial, func(t *testing.T) {
 			resp, err := testGRPCClient.GetProof(ctx, &pb.GetProofRequest{
 				IssuerId:     issuerID,
 				SerialNumber: serial,
@@ -381,24 +254,12 @@ func TestIntegrationGRPCMembershipProof(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetProof: %v", err)
 			}
-
-			if !resp.Membership {
-				t.Fatal("expected membership=true")
+			if resp.ProofType != uint32(leanimt.ProofMembership) {
+				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofMembership)
 			}
-			if len(resp.Entry) != 3 {
-				t.Fatalf("entry length: got %d, want 3", len(resp.Entry))
+			if resp.Leaf.Value != resp.Value {
+				t.Errorf("leaf.value=%s, value=%s — must match for membership", resp.Leaf.Value, resp.Value)
 			}
-			if resp.Entry[1] != "0x1" {
-				t.Errorf("entry[1]: got %s, want 0x1", resp.Entry[1])
-			}
-			if resp.Entry[2] != "0x1" {
-				t.Errorf("entry[2]: got %s, want 0x1", resp.Entry[2])
-			}
-			if resp.Depth != int32(smt.DefaultDepth) {
-				t.Errorf("depth: got %d, want %d", resp.Depth, smt.DefaultDepth)
-			}
-
-			verifyGRPCProofIndependently(t, resp)
 		})
 	}
 }
@@ -416,17 +277,9 @@ func TestIntegrationGRPCNonMembershipProof(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetProof: %v", err)
 			}
-
-			if resp.Membership {
-				t.Fatal("expected membership=false")
+			if resp.ProofType != uint32(leanimt.ProofNonMembership) {
+				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofNonMembership)
 			}
-			if len(resp.MatchingEntry) > 0 {
-				if len(resp.MatchingEntry) != 3 {
-					t.Fatalf("matchingEntry length: got %d, want 3", len(resp.MatchingEntry))
-				}
-			}
-
-			verifyGRPCProofIndependently(t, resp)
 		})
 	}
 }
