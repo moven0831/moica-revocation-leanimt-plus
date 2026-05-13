@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/chain"
-	"github.com/moven0831/moica-revocation-smt/server/internal/config"
-	"github.com/moven0831/moica-revocation-smt/server/internal/crl"
-	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
-	"github.com/moven0831/moica-revocation-smt/server/internal/snapshot"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/chain"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/config"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/crl"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/snapshot"
 )
 
 type issuer struct {

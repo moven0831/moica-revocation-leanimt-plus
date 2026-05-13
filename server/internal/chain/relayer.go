@@ -10,7 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/moven0831/moica-revocation-smt/server/internal/chain/contract"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/chain/contract"
 )
 
 // Issuer IDs are keccak256 hashes used as on-chain identifiers.

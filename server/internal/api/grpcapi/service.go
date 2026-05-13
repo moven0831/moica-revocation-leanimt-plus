@@ -9,9 +9,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/hexenc"
-	"github.com/moven0831/moica-revocation-smt/server/internal/manager"
-	pb "github.com/moven0831/moica-revocation-smt/server/pkg/proto/revocation"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/hexenc"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/manager"
+	pb "github.com/moven0831/moica-revocation-leanimt-plus/server/pkg/proto/revocation"
 )
 
 type RevocationServer struct {

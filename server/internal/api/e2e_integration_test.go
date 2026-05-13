@@ -20,11 +20,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/api/grpcapi"
-	"github.com/moven0831/moica-revocation-smt/server/internal/api/rest"
-	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
-	"github.com/moven0831/moica-revocation-smt/server/internal/manager"
-	pb "github.com/moven0831/moica-revocation-smt/server/pkg/proto/revocation"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/api/grpcapi"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/api/rest"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/manager"
+	pb "github.com/moven0831/moica-revocation-leanimt-plus/server/pkg/proto/revocation"
 )
 
 const (
