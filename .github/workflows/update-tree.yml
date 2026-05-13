@@ -28,14 +28,14 @@ jobs:
       - run: go mod download
 
       - name: Build CLI
-        run: go build -o bin/smtbuild ./cmd/smtbuild
+        run: go build -o bin/leanimt-plus-build ./cmd/leanimt-plus-build
 
       - name: Build WASM
-        run: GOOS=js GOARCH=wasm go build -o wasm/leanimt.wasm ./wasm/
+        run: GOOS=js GOARCH=wasm go build -o wasm/leanimt-plus.wasm ./wasm/
 
       - name: Fetch CRL & Build LeanIMT+
         id: build
-        run: ./bin/smtbuild --binary
+        run: ./bin/leanimt-plus-build --binary
         env:
           DATA_DIR: ./data
 
@@ -46,7 +46,7 @@ jobs:
             bin="data/${gen}/tree-snapshot.bin.gz"
             if [ -f "$json" ] && [ ! -f "$bin" ]; then
               echo "Converting $json to binary..."
-              ./bin/smtbuild --convert-binary "$json"
+              ./bin/leanimt-plus-build --convert-binary "$json"
             fi
           done
 
@@ -68,7 +68,7 @@ jobs:
           # Upload if CRL changed OR if new asset types are missing from the release
           if [ "${{ steps.build.outputs.changed }}" = "true" ]; then
             echo "needs_upload=true" >> "$GITHUB_OUTPUT"
-          elif ! gh release view snapshot-latest --json assets --jq '.assets[].name' 2>/dev/null | grep -q 'leanimt.wasm'; then
+          elif ! gh release view snapshot-latest --json assets --jq '.assets[].name' 2>/dev/null | grep -q 'leanimt-plus.wasm'; then
             echo "needs_upload=true" >> "$GITHUB_OUTPUT"
           else
             echo "needs_upload=false" >> "$GITHUB_OUTPUT"
@@ -111,8 +111,8 @@ jobs:
             fi
           done
           # Add WASM module assets
-          if [ -f "wasm/leanimt.wasm" ]; then
-            assets="$assets wasm/leanimt.wasm"
+          if [ -f "wasm/leanimt-plus.wasm" ]; then
+            assets="$assets wasm/leanimt-plus.wasm"
           fi
           WASM_JS="$(go env GOROOT)/lib/wasm/wasm_exec.js"
           if [ ! -f "$WASM_JS" ]; then WASM_JS="$(go env GOROOT)/misc/wasm/wasm_exec.js"; fi
@@ -131,7 +131,7 @@ jobs:
 
       - name: Post root on-chain
         if: steps.build.outputs.changed == 'true' || inputs.force_post_root == true
-        run: ./bin/smtbuild --post-root
+        run: ./bin/leanimt-plus-build --post-root
         env:
           DATA_DIR: ./data
           RPC_URL: ${{ secrets.RPC_URL }}
