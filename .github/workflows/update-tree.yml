@@ -31,7 +31,7 @@ jobs:
         run: go build -o bin/smtbuild ./cmd/smtbuild
 
       - name: Build WASM
-        run: GOOS=js GOARCH=wasm go build -o wasm/smt.wasm ./wasm/
+        run: GOOS=js GOARCH=wasm go build -o wasm/leanimt.wasm ./wasm/
 
       - name: Fetch CRL & Build LeanIMT+
         id: build
@@ -68,7 +68,7 @@ jobs:
           # Upload if CRL changed OR if new asset types are missing from the release
           if [ "${{ steps.build.outputs.changed }}" = "true" ]; then
             echo "needs_upload=true" >> "$GITHUB_OUTPUT"
-          elif ! gh release view snapshot-latest --json assets --jq '.assets[].name' 2>/dev/null | grep -q 'smt.wasm'; then
+          elif ! gh release view snapshot-latest --json assets --jq '.assets[].name' 2>/dev/null | grep -q 'leanimt.wasm'; then
             echo "needs_upload=true" >> "$GITHUB_OUTPUT"
           else
             echo "needs_upload=false" >> "$GITHUB_OUTPUT"
@@ -111,8 +111,8 @@ jobs:
             fi
           done
           # Add WASM module assets
-          if [ -f "wasm/smt.wasm" ]; then
-            assets="$assets wasm/smt.wasm"
+          if [ -f "wasm/leanimt.wasm" ]; then
+            assets="$assets wasm/leanimt.wasm"
           fi
           WASM_JS="$(go env GOROOT)/lib/wasm/wasm_exec.js"
           if [ ! -f "$WASM_JS" ]; then WASM_JS="$(go env GOROOT)/misc/wasm/wasm_exec.js"; fi

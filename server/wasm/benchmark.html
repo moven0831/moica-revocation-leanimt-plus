@@ -94,7 +94,7 @@ if (!('DecompressionStream' in window)) {
 } else {
   const go = new Go();
   const wasmFetchStart = performance.now();
-  WebAssembly.instantiateStreaming(fetch('smt.wasm'), go.importObject).then(result => {
+  WebAssembly.instantiateStreaming(fetch('leanimt.wasm'), go.importObject).then(result => {
     const wasmLoadTime = performance.now() - wasmFetchStart;
     go.run(result.instance);
     log(`WASM loaded in ${formatMs(wasmLoadTime)}`);
@@ -105,7 +105,7 @@ if (!('DecompressionStream' in window)) {
     statusEl.classList.add('error');
   });
 
-  fetch('smt.wasm', { method: 'HEAD' }).then(r => {
+  fetch('leanimt.wasm', { method: 'HEAD' }).then(r => {
     const size = r.headers.get('content-length');
     if (size) addResult('WASM binary size', formatBytes(parseInt(size)));
   }).catch(() => {});

@@ -7,7 +7,7 @@ server/bin/
 server/smtbuild
 
 # WASM build output (kept in GitHub Releases only)
-server/wasm/smt.wasm
+server/wasm/leanimt.wasm
 server/wasm/wasm_exec.js
 server/wasm/tree-snapshot.bin.gz
 
