@@ -246,6 +246,24 @@ Convert an existing JSON snapshot: `./bin/leanimt-plus-build --convert-binary da
 
 For 412k G2 entries, LeanIMT+ depth is `ceil(log2(412k + 1)) = 19`. Membership proofs typically carry ≤ 19 siblings.
 
+## Benchmarks
+
+A reproducible side-by-side benchmark of LeanIMT+ against the predecessor [`moica-revocation-smt`](https://github.com/moven0831/moica-revocation-smt) (fixed-depth-128 SMT, `@zk-kit/smt` wire-compatible) lives in [`bench/`](bench/). It runs both impls against the **same live MOICA G2 + G3 CRL DERs** and reports build time, proof gen + verify time, proof size, snapshot size on disk, memory, and Poseidon `Hash2`/`Hash3` call counts.
+
+```bash
+# 1. Clone the SMT repo as a sibling (one-time).
+git clone https://github.com/moven0831/moica-revocation-smt ../moica-revocation-smt
+#    Apply the matching bench file — see bench/smt-bench-pr/ in this repo.
+
+# 2. Run.
+make bench-real
+
+# 3. Read the report.
+open bench/RESULTS.md
+```
+
+See [`bench/README.md`](bench/README.md) for the env-var contract (`MOICA_BENCH_DER_DIR`, `SMT_REPO_DIR`, `BENCH_COUNT`, …) and a description of what each metric measures.
+
 ## CI/CD
 
 **`ci.yml`** — runs on push/PR to main:
