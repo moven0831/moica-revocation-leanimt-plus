@@ -4,14 +4,18 @@
 # both, captures stdout, and invokes the report generator.
 #
 # Env vars:
-#   SMT_REPO_DIR  Path to a clone of moica-revocation-smt with the matching
-#                 bench file applied. Defaults to ../moica-revocation-smt.
-#   BENCH_COUNT   Number of -count iterations for fast benches (default 3).
-#   BENCH_BUILD_TIME  -benchtime for the heavy Build/HashCount benches.
-#                 Default 3x (force exactly 3 builds; G2 takes seconds).
-#   BENCH_FAST_TIME   -benchtime for ProofGen/Verify benches. Default 1s.
-#   MOICA_BENCH_DER_DIR  If already set, fetch.sh is still invoked but won't
-#                 re-download cached DERs.
+#   SMT_REPO_DIR          Path to moica-revocation-smt clone. Default ../moica-revocation-smt.
+#   BENCH_COUNT           -count for fast benches. Default 3.
+#   BENCH_BUILD_TIME      -benchtime for heavy benches. Default 3x.
+#   BENCH_FAST_TIME       -benchtime for fast benches. Default 1s.
+#   LEAN_BENCH_TIMEOUT    go test -timeout for the LeanIMT+ side. Default 2h.
+#                         G2 InsertManySorted ~3 min per build; heavy pass with
+#                         -benchtime=3x runs 6 G2 builds (Build + HashCount_Build).
+#   SMT_BENCH_TIMEOUT     go test -timeout for the SMT side. Default 24h.
+#                         G2 BatchAdd takes ~2 hours per build; the heavy pass
+#                         with -benchtime=3x runs 6 G2 builds and would burn
+#                         half a day. Default is intentionally very generous so
+#                         the harness never kills a correctly-running bench.
 
 set -eu
 
@@ -23,6 +27,8 @@ smt_repo_dir=${SMT_REPO_DIR:-$repo_dir/../moica-revocation-smt}
 bench_count=${BENCH_COUNT:-3}
 bench_build_time=${BENCH_BUILD_TIME:-3x}
 bench_fast_time=${BENCH_FAST_TIME:-1s}
+lean_bench_timeout=${LEAN_BENCH_TIMEOUT:-2h}
+smt_bench_timeout=${SMT_BENCH_TIMEOUT:-24h}
 
 if [ ! -d "$smt_repo_dir" ]; then
 	echo "[run.sh] SMT_REPO_DIR not found: $smt_repo_dir" >&2
@@ -47,28 +53,29 @@ run_bench() {
 	label=$1
 	dir=$2
 	pkg=$3
+	timeout=$4
 	out_heavy="$cache_dir/${label}_heavy.txt"
 	out_fast="$cache_dir/${label}_fast.txt"
 	out_snap="$cache_dir/${label}_snapshot.txt"
 
-	echo "[run.sh] $label heavy benches -> $out_heavy"
-	( cd "$dir" && go test -tags=bench_real -benchmem -run='^$' \
+	echo "[run.sh] $label heavy benches (timeout=$timeout) -> $out_heavy"
+	( cd "$dir" && go test -tags=bench_real -benchmem -timeout="$timeout" -run='^$' \
 		-bench='Build$|HashCount_Build' -benchtime="$bench_build_time" -count=1 \
 		"$pkg" ) | tee "$out_heavy"
 
-	echo "[run.sh] $label fast benches -> $out_fast"
-	( cd "$dir" && go test -tags=bench_real -benchmem -run='^$' \
+	echo "[run.sh] $label fast benches (timeout=$timeout) -> $out_fast"
+	( cd "$dir" && go test -tags=bench_real -benchmem -timeout="$timeout" -run='^$' \
 		-bench='ProofGen|^BenchmarkReal_Verify$|HashCount_Verify' \
 		-benchtime="$bench_fast_time" -count="$bench_count" \
 		"$pkg" ) | tee "$out_fast"
 
-	echo "[run.sh] $label snapshot test -> $out_snap"
-	( cd "$dir" && go test -tags=bench_real -run='^TestReal_SnapshotSize$' -v \
+	echo "[run.sh] $label snapshot test (timeout=$timeout) -> $out_snap"
+	( cd "$dir" && go test -tags=bench_real -timeout="$timeout" -run='^TestReal_SnapshotSize$' -v \
 		"$pkg" ) | tee "$out_snap"
 }
 
-run_bench leanimt_plus "$repo_dir/server" ./internal/leanimt_plus
-run_bench smt "$smt_repo_dir/server" ./internal/smt
+run_bench leanimt_plus "$repo_dir/server" ./internal/leanimt_plus "$lean_bench_timeout"
+run_bench smt "$smt_repo_dir/server" ./internal/smt "$smt_bench_timeout"
 
 mod_out="$cache_dir/module_divergence.txt"
 (

@@ -33,6 +33,8 @@ xdg-open bench/RESULTS.md   # linux
 | `BENCH_COUNT` | `3` | `-count` for fast benches (ProofGen, Verify). |
 | `BENCH_BUILD_TIME` | `3x` | `-benchtime` for heavy benches (Build, HashCount_Build). |
 | `BENCH_FAST_TIME` | `1s` | `-benchtime` for fast benches. |
+| `LEAN_BENCH_TIMEOUT` | `2h` | `go test -timeout` for the LeanIMT+ side. G2 `InsertManySorted` takes ~3 min per build; heavy pass runs 6 G2 builds. |
+| `SMT_BENCH_TIMEOUT` | `24h` | `go test -timeout` for the SMT side. G2 `BatchAdd` takes ~2 hours per build; heavy pass with `-benchtime=3x` runs 6 G2 builds. Intentionally very generous so the harness never kills a correctly-running bench. |
 
 ## What gets measured
 

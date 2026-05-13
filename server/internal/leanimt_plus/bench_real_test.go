@@ -37,9 +37,22 @@ const (
 )
 
 type loadedDataset struct {
-	once    sync.Once
-	serials []*big.Int
-	err     error
+	serialsOnce sync.Once
+	serials     []*big.Int
+	serialsErr  error
+
+	treeOnce sync.Once
+	tree     *leanimt_plus.LeanIMTPlus
+	treeErr  error
+
+	queriesOnce sync.Once
+	memQueries  []*big.Int
+	nonQueries  []*big.Int
+
+	proofsOnce sync.Once
+	memProofs  []*leanimt_plus.Proof
+	nonProofs  []*leanimt_plus.Proof
+	proofsErr  error
 }
 
 var datasets = map[datasetID]*loadedDataset{
@@ -66,27 +79,87 @@ func loadSerials(tb testing.TB, id datasetID) []*big.Int {
 		tb.Skipf("MOICA_BENCH_DER_DIR not set; run via bench/run.sh which writes DERs to bench/.cache/")
 	}
 	entry := datasets[id]
-	entry.once.Do(func() {
+	entry.serialsOnce.Do(func() {
 		path := filepath.Join(dir, derFilename(id))
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			entry.err = fmt.Errorf("read %s: %w", path, err)
+			entry.serialsErr = fmt.Errorf("read %s: %w", path, err)
 			return
 		}
 		parsed, err := crl.ParseDER(raw)
 		if err != nil {
-			entry.err = fmt.Errorf("parse %s: %w", path, err)
+			entry.serialsErr = fmt.Errorf("parse %s: %w", path, err)
 			return
 		}
 		entry.serials = crl.DedupAndSortSerials(parsed.RevokedSerials)
 	})
-	if entry.err != nil {
-		tb.Fatal(entry.err)
+	if entry.serialsErr != nil {
+		tb.Fatal(entry.serialsErr)
 	}
 	if len(entry.serials) == 0 {
 		tb.Fatalf("dataset %s loaded empty", id)
 	}
 	return entry.serials
+}
+
+func datasetTree(tb testing.TB, id datasetID) *leanimt_plus.LeanIMTPlus {
+	serials := loadSerials(tb, id)
+	entry := datasets[id]
+	entry.treeOnce.Do(func() {
+		h := leanimt_plus.NewPoseidonHasher()
+		t := leanimt_plus.New(h)
+		if err := t.InsertManySorted(serials); err != nil {
+			entry.treeErr = fmt.Errorf("build %s tree: %w", id, err)
+			return
+		}
+		entry.tree = t
+	})
+	if entry.treeErr != nil {
+		tb.Fatal(entry.treeErr)
+	}
+	return entry.tree
+}
+
+func datasetQueries(tb testing.TB, id datasetID) (memQ, nonQ []*big.Int) {
+	serials := loadSerials(tb, id)
+	entry := datasets[id]
+	entry.queriesOnce.Do(func() {
+		entry.memQueries = membershipQueries(serials, benchQueryCount, benchSeed)
+		entry.nonQueries = nonMembershipQueries(serials, benchQueryCount, benchSeed)
+	})
+	return entry.memQueries, entry.nonQueries
+}
+
+func datasetProofs(tb testing.TB, id datasetID) (memProofs, nonProofs []*leanimt_plus.Proof) {
+	tree := datasetTree(tb, id)
+	memQ, nonQ := datasetQueries(tb, id)
+	entry := datasets[id]
+	entry.proofsOnce.Do(func() {
+		mem := make([]*leanimt_plus.Proof, len(memQ))
+		for i, q := range memQ {
+			p, err := tree.GenerateProof(q)
+			if err != nil {
+				entry.proofsErr = fmt.Errorf("pre-generate membership proof: %w", err)
+				return
+			}
+			mem[i] = p
+		}
+		non := make([]*leanimt_plus.Proof, len(nonQ))
+		for i, q := range nonQ {
+			p, err := tree.GenerateProof(q)
+			if err != nil {
+				entry.proofsErr = fmt.Errorf("pre-generate non-membership proof: %w", err)
+				return
+			}
+			non[i] = p
+		}
+		entry.memProofs = mem
+		entry.nonProofs = non
+	})
+	if entry.proofsErr != nil {
+		tb.Fatal(entry.proofsErr)
+	}
+	return entry.memProofs, entry.nonProofs
 }
 
 func membershipQueries(serials []*big.Int, k int, seed int64) []*big.Int {
@@ -120,15 +193,6 @@ func nonMembershipQueries(serials []*big.Int, k int, seed int64) []*big.Int {
 	return out
 }
 
-func newTreeFor(tb testing.TB, serials []*big.Int) *leanimt_plus.LeanIMTPlus {
-	h := leanimt_plus.NewPoseidonHasher()
-	tree := leanimt_plus.New(h)
-	if err := tree.InsertManySorted(serials); err != nil {
-		tb.Fatalf("build tree: %v", err)
-	}
-	return tree
-}
-
 func BenchmarkReal_Build(b *testing.B) {
 	for _, ds := range []datasetID{datasetG2, datasetG3} {
 		ds := ds
@@ -151,10 +215,8 @@ func BenchmarkReal_ProofGen(b *testing.B) {
 	for _, ds := range []datasetID{datasetG2, datasetG3} {
 		ds := ds
 		b.Run(string(ds), func(b *testing.B) {
-			serials := loadSerials(b, ds)
-			tree := newTreeFor(b, serials)
-			memQ := membershipQueries(serials, benchQueryCount, benchSeed)
-			nonQ := nonMembershipQueries(serials, benchQueryCount, benchSeed)
+			tree := datasetTree(b, ds)
+			memQ, nonQ := datasetQueries(b, ds)
 
 			b.Run("Membership", func(b *testing.B) { benchProofGen(b, tree, memQ) })
 			b.Run("NonMembership", func(b *testing.B) { benchProofGen(b, tree, nonQ) })
@@ -185,33 +247,15 @@ func benchProofGen(b *testing.B, tree *leanimt_plus.LeanIMTPlus, queries []*big.
 }
 
 func BenchmarkReal_Verify(b *testing.B) {
+	h := leanimt_plus.NewPoseidonHasher()
 	for _, ds := range []datasetID{datasetG2, datasetG3} {
 		ds := ds
 		b.Run(string(ds), func(b *testing.B) {
-			serials := loadSerials(b, ds)
-			h := leanimt_plus.NewPoseidonHasher()
-			tree := newTreeFor(b, serials)
-			memQ := membershipQueries(serials, benchQueryCount, benchSeed)
-			nonQ := nonMembershipQueries(serials, benchQueryCount, benchSeed)
-			memProofs := preGenerate(b, tree, memQ)
-			nonProofs := preGenerate(b, tree, nonQ)
-
+			memProofs, nonProofs := datasetProofs(b, ds)
 			b.Run("Membership", func(b *testing.B) { benchVerify(b, h, memProofs) })
 			b.Run("NonMembership", func(b *testing.B) { benchVerify(b, h, nonProofs) })
 		})
 	}
-}
-
-func preGenerate(b *testing.B, tree *leanimt_plus.LeanIMTPlus, queries []*big.Int) []*leanimt_plus.Proof {
-	out := make([]*leanimt_plus.Proof, len(queries))
-	for i, q := range queries {
-		p, err := tree.GenerateProof(q)
-		if err != nil {
-			b.Fatalf("pre-generate proof: %v", err)
-		}
-		out[i] = p
-	}
-	return out
 }
 
 func benchVerify(b *testing.B, h leanimt_plus.Hasher, proofs []*leanimt_plus.Proof) {
@@ -258,14 +302,8 @@ func BenchmarkReal_HashCount_Verify(b *testing.B) {
 	for _, ds := range []datasetID{datasetG2, datasetG3} {
 		ds := ds
 		b.Run(string(ds), func(b *testing.B) {
-			serials := loadSerials(b, ds)
-			h := leanimt_plus.NewPoseidonHasher()
-			tree := newTreeFor(b, serials)
-			memQ := membershipQueries(serials, benchQueryCount, benchSeed)
-			nonQ := nonMembershipQueries(serials, benchQueryCount, benchSeed)
-			memProofs := preGenerate(b, tree, memQ)
-			nonProofs := preGenerate(b, tree, nonQ)
-			c := &countingHasher{inner: h}
+			memProofs, nonProofs := datasetProofs(b, ds)
+			c := &countingHasher{inner: leanimt_plus.NewPoseidonHasher()}
 
 			b.Run("Membership", func(b *testing.B) {
 				c.n2.Store(0)
@@ -300,8 +338,7 @@ func BenchmarkReal_HashCount_Verify(b *testing.B) {
 func TestReal_SnapshotSize(t *testing.T) {
 	tmp := t.TempDir()
 	for _, ds := range []datasetID{datasetG2, datasetG3} {
-		serials := loadSerials(t, ds)
-		tree := newTreeFor(t, serials)
+		tree := datasetTree(t, ds)
 
 		gzPath := filepath.Join(tmp, fmt.Sprintf("%s.json.gz", ds))
 		if err := snapshot.ExportFile(tree, 0, gzPath); err != nil {
