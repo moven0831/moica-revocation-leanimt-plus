@@ -1,4 +1,4 @@
-module github.com/moven0831/moica-revocation-smt/server
+module github.com/moven0831/moica-revocation-leanimt-plus/server
 
 go 1.24.0
 

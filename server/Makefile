@@ -7,7 +7,7 @@ build-cli:
 	go build -o bin/smtbuild ./cmd/smtbuild
 
 build-wasm:
-	GOOS=js GOARCH=wasm go build -o wasm/smt.wasm ./wasm/
+	GOOS=js GOARCH=wasm go build -o wasm/leanimt.wasm ./wasm/
 	@WASM_JS="$$(go env GOROOT)/lib/wasm/wasm_exec.js"; \
 	if [ ! -f "$$WASM_JS" ]; then WASM_JS="$$(go env GOROOT)/misc/wasm/wasm_exec.js"; fi; \
 	cp "$$WASM_JS" wasm/

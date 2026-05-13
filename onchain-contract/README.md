@@ -101,4 +101,4 @@ Set these repository secrets for automated on-chain posting:
 
 ## CI/CD Integration
 
-The `update-smt.yml` workflow posts roots on-chain automatically via `smtbuild --post-root` after building LeanIMT+ snapshots. It reads `root.json` files and calls `LeanIMTPlusRootStorage.setRoot()` for each issuer. Skips gracefully when secrets are not configured (forks/PRs).
+The `update-tree.yml` workflow posts roots on-chain automatically via `smtbuild --post-root` after building LeanIMT+ snapshots. It reads `root.json` files and calls `LeanIMTPlusRootStorage.setRoot()` for each issuer. Skips gracefully when secrets are not configured (forks/PRs).

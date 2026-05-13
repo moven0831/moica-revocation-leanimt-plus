@@ -14,14 +14,14 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/api/grpcapi"
-	"github.com/moven0831/moica-revocation-smt/server/internal/api/rest"
-	"github.com/moven0831/moica-revocation-smt/server/internal/config"
-	"github.com/moven0831/moica-revocation-smt/server/internal/crl"
-	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
-	"github.com/moven0831/moica-revocation-smt/server/internal/manager"
-	"github.com/moven0831/moica-revocation-smt/server/internal/snapshot"
-	pb "github.com/moven0831/moica-revocation-smt/server/pkg/proto/revocation"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/api/grpcapi"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/api/rest"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/config"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/crl"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/manager"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/snapshot"
+	pb "github.com/moven0831/moica-revocation-leanimt-plus/server/pkg/proto/revocation"
 )
 
 func main() {

@@ -39,7 +39,7 @@ func Load() *Config {
 		RPCURL:            getEnv("RPC_URL", ""),
 		RelayerPrivateKey: getEnv("RELAYER_PRIVATE_KEY", ""),
 		ContractAddress:   getEnv("CONTRACT_ADDRESS", ""),
-		GitHubRepo:        getEnv("GITHUB_REPO", "moven0831/moica-revocation-smt"),
+		GitHubRepo:        getEnv("GITHUB_REPO", "moven0831/moica-revocation-leanimt-plus"),
 	}
 }
 

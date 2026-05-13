@@ -77,7 +77,7 @@ Root registry with tree metadata: `setRoot(bytes32 issuerId, uint256 newRoot, ui
 ## CI/CD
 
 - **ci.yml** — On push/PR: Go unit tests + build, Hardhat contract tests, E2E integration tests (synthetic 1024-leaf tree, no network dependency)
-- **update-smt.yml** — Cron (04:00 & 16:00 UTC): smtbuild → commit snapshots → upload to `snapshot-latest` release → `smtbuild --post-root` posts roots on-chain (Arbitrum Sepolia)
+- **update-tree.yml** — Cron (04:00 & 16:00 UTC): smtbuild → commit snapshots → upload to `snapshot-latest` release → `smtbuild --post-root` posts roots on-chain (Arbitrum Sepolia)
 
 ## Data Scale
 

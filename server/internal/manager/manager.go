@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
 )
 
 type TreeEntry struct {

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
-	"github.com/moven0831/moica-revocation-smt/server/internal/manager"
-	"github.com/moven0831/moica-revocation-smt/server/internal/snapshot"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/manager"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/snapshot"
 )
 
 type IssuerConfig struct {

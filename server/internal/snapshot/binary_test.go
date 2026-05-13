@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
 )
 
 func TestBinaryRoundTrip(t *testing.T) {

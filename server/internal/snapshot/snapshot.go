@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/moven0831/moica-revocation-smt/server/internal/hexenc"
-	"github.com/moven0831/moica-revocation-smt/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/hexenc"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
 )
 
 const SnapshotVersion = 2
