@@ -1,4 +1,4 @@
-.PHONY: build build-cli build-wasm build-binary test test-integration proto clean
+.PHONY: build build-cli build-wasm build-binary test test-integration proto clean bench-real bench-real-fetch bench-real-clean
 
 build:
 	go build -o bin/leanimt-plus-server ./cmd/leanimt-plus-server
@@ -42,3 +42,13 @@ clean:
 
 run: build
 	./bin/leanimt-plus-server
+
+# Passthroughs to the top-level real-data benchmark harness (bench/).
+bench-real:
+	$(MAKE) -C .. bench-real
+
+bench-real-fetch:
+	$(MAKE) -C .. bench-real-fetch
+
+bench-real-clean:
+	$(MAKE) -C .. bench-real-clean

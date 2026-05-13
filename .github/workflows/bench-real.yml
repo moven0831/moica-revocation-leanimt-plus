@@ -1,0 +1,65 @@
+name: Bench (real CRL data)
+
+# Manual only — fetches ~25 MB of live MOICA CRL data and depends on a
+# parallel checkout of moica-revocation-smt. See bench/README.md.
+on:
+  workflow_dispatch:
+    inputs:
+      smt_ref:
+        description: "Git ref of moica-revocation-smt to check out (branch, tag, or SHA). The matching bench file must exist on that ref."
+        required: false
+        default: "main"
+      runs:
+        description: "Value for -count on fast benches (ProofGen / Verify)."
+        required: false
+        default: "3"
+
+jobs:
+  bench:
+    name: LeanIMT+ vs SMT real-data benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout LeanIMT+ repo
+        uses: actions/checkout@v4
+        with:
+          path: leanimt-plus
+
+      - name: Checkout SMT repo
+        uses: actions/checkout@v4
+        with:
+          repository: moven0831/moica-revocation-smt
+          ref: ${{ inputs.smt_ref }}
+          path: moica-revocation-smt
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Verify SMT bench file is present
+        env:
+          SMT_REF: ${{ inputs.smt_ref }}
+        run: |
+          if [ ! -f moica-revocation-smt/server/internal/smt/bench_real_test.go ]; then
+            echo "::error::The matching bench file moica-revocation-smt/server/internal/smt/bench_real_test.go is missing on ref ${SMT_REF}."
+            echo "Apply the bench PR (see leanimt-plus/bench/smt-bench-pr/) and re-run."
+            exit 1
+          fi
+
+      - name: Run benchmark
+        working-directory: leanimt-plus
+        env:
+          SMT_REPO_DIR: ${{ github.workspace }}/moica-revocation-smt
+          BENCH_COUNT: ${{ inputs.runs }}
+        run: make bench-real
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: |
+            leanimt-plus/bench/RESULTS.md
+            leanimt-plus/bench/.cache/*.txt
+          retention-days: 30

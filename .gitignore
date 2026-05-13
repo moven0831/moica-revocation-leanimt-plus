@@ -10,5 +10,8 @@ server/wasm/leanimt-plus.wasm
 server/wasm/wasm_exec.js
 server/wasm/tree-snapshot.bin.gz
 
+# Benchmark cache
+bench/.cache/
+
 # OS
 .DS_Store
