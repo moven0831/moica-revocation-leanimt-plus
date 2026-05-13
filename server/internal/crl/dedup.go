@@ -5,7 +5,7 @@ import (
 	"sort"
 )
 
-// DedupAndSortSerials prepares CRL serials for leanimt.InsertManySorted's
+// DedupAndSortSerials prepares CRL serials for leanimt_plus.InsertManySorted's
 // O(1)-tail fast path. Zero and nil are dropped; the tree reserves zero for
 // the sentinel. The returned slice shares element pointers with the input;
 // the tree copies values defensively.

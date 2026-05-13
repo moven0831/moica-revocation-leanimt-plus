@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/hexenc"
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 )
 
 const SnapshotVersion = 2
@@ -33,7 +33,7 @@ type LeafEntry struct {
 	NextValue string `json:"nextValue"`
 }
 
-func Export(tree *leanimt.LeanIMTPlus, crlNumber uint64, w io.Writer) error {
+func Export(tree *leanimt_plus.LeanIMTPlus, crlNumber uint64, w io.Writer) error {
 	nodes, leaves := tree.ExportState()
 
 	jsonNodes := make([][]string, len(nodes))
@@ -70,7 +70,7 @@ func Export(tree *leanimt.LeanIMTPlus, crlNumber uint64, w io.Writer) error {
 	return json.NewEncoder(gw).Encode(snap)
 }
 
-func ExportFile(tree *leanimt.LeanIMTPlus, crlNumber uint64, path string) error {
+func ExportFile(tree *leanimt_plus.LeanIMTPlus, crlNumber uint64, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
@@ -96,7 +96,7 @@ func ExportFile(tree *leanimt.LeanIMTPlus, crlNumber uint64, path string) error 
 	return nil
 }
 
-func ImportFile(h leanimt.Hasher, path string) (*leanimt.LeanIMTPlus, uint64, error) {
+func ImportFile(h leanimt_plus.Hasher, path string) (*leanimt_plus.LeanIMTPlus, uint64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, err
@@ -105,7 +105,7 @@ func ImportFile(h leanimt.Hasher, path string) (*leanimt.LeanIMTPlus, uint64, er
 	return Import(h, f)
 }
 
-func Import(h leanimt.Hasher, r io.Reader) (*leanimt.LeanIMTPlus, uint64, error) {
+func Import(h leanimt_plus.Hasher, r io.Reader) (*leanimt_plus.LeanIMTPlus, uint64, error) {
 	gr, err := gzip.NewReader(r)
 	if err != nil {
 		return nil, 0, fmt.Errorf("gzip reader: %w", err)
@@ -137,7 +137,7 @@ func Import(h leanimt.Hasher, r io.Reader) (*leanimt.LeanIMTPlus, uint64, error)
 			nodes[lvl][i] = n
 		}
 	}
-	leaves := make([]leanimt.IndexedLeaf, len(snap.Leaves))
+	leaves := make([]leanimt_plus.IndexedLeaf, len(snap.Leaves))
 	for i, l := range snap.Leaves {
 		v, err := hexenc.Decode(l.Value)
 		if err != nil {
@@ -147,10 +147,10 @@ func Import(h leanimt.Hasher, r io.Reader) (*leanimt.LeanIMTPlus, uint64, error)
 		if err != nil {
 			return nil, 0, fmt.Errorf("leaves[%d].nextValue: %w", i, err)
 		}
-		leaves[i] = leanimt.IndexedLeaf{Value: v, NextValue: nv}
+		leaves[i] = leanimt_plus.IndexedLeaf{Value: v, NextValue: nv}
 	}
 
-	tree := leanimt.New(h)
+	tree := leanimt_plus.New(h)
 	if len(leaves) > 0 {
 		if err := tree.ImportState(nodes, leaves); err != nil {
 			return nil, 0, fmt.Errorf("import state: %w", err)

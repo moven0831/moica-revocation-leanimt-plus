@@ -11,15 +11,15 @@ Go+Solidity pipeline that fetches Taiwan MOICA Certificate Revocation Lists (CRL
 ### Go Server (run from `server/`)
 
 ```bash
-make build              # Compile bin/smtserver
-make build-cli          # Compile bin/smtbuild
+make build              # Compile bin/leanimt-plus-server
+make build-cli          # Compile bin/leanimt-plus-build
 make test               # Unit tests (excludes integration)
 make test-integration   # API E2E (synthetic tree, ~1s) + live CRL fetch (~30 min)
 make proto              # Regenerate gRPC stubs from .proto
-make run                # Build and run smtserver
+make run                # Build and run leanimt-plus-server
 
 # Single test
-go test ./internal/leanimt -run TestMembership -v
+go test ./internal/leanimt_plus -run TestMembership -v
 ```
 
 ### Solidity Contracts (run from `onchain-contract/`)
@@ -32,15 +32,15 @@ npx hardhat test
 
 ## Architecture
 
-Two entry points in `server/cmd/` (binaries kept named `smtbuild`/`smtserver` for backwards-compatible deploy scripts):
-- **smtserver** — Long-running REST (port 3000) + gRPC (port 50051) server with CRL polling
-- **smtbuild** — One-shot CLI: fetch CRL → build LeanIMT+ → export snapshot (used in CI cron). With `--post-root`, reads `root.json` files and posts roots on-chain via `LeanIMTPlusRootStorage.setRoot()`
+Two entry points in `server/cmd/`:
+- **leanimt-plus-server** — Long-running REST (port 3000) + gRPC (port 50051) server with CRL polling
+- **leanimt-plus-build** — One-shot CLI: fetch CRL → build LeanIMT+ → export snapshot (used in CI cron). With `--post-root`, reads `root.json` files and posts roots on-chain via `LeanIMTPlusRootStorage.setRoot()`
 
 ### Key packages (`server/internal/`)
 
 | Package | Purpose |
 |---------|---------|
-| `leanimt/` | LeanIMT+ core: Poseidon-P256 hash, dynamic-depth tree, sorted indexed leaves, membership/non-membership proofs |
+| `leanimt_plus/` | LeanIMT+ core: Poseidon-P256 hash, dynamic-depth tree, sorted indexed leaves, membership/non-membership proofs |
 | `crl/` | CRL HTTP fetcher, DER parser, periodic watcher goroutine |
 | `manager/` | Thread-safe per-issuer (`g2`, `g3`) tree management via `TreeManager` |
 | `api/rest/` | Chi router: `GET /proof/{issuerId}/{sn}`, `GET /status` |
@@ -50,7 +50,7 @@ Two entry points in `server/cmd/` (binaries kept named `smtbuild`/`smtserver` fo
 | `store/` | Store interface with MemoryStore and BadgerStore implementations |
 | `config/` | Environment variable loader |
 
-### Startup flow (smtserver)
+### Startup flow (leanimt-plus-server)
 
 1. Load config from env vars
 2. Import snapshots: local file → GitHub Release fallback → live CRL rebuild
@@ -77,7 +77,7 @@ Root registry with tree metadata: `setRoot(bytes32 issuerId, uint256 newRoot, ui
 ## CI/CD
 
 - **ci.yml** — On push/PR: Go unit tests + build, Hardhat contract tests, E2E integration tests (synthetic 1024-leaf tree, no network dependency)
-- **update-tree.yml** — Cron (04:00 & 16:00 UTC): smtbuild → commit snapshots → upload to `snapshot-latest` release → `smtbuild --post-root` posts roots on-chain (Arbitrum Sepolia)
+- **update-tree.yml** — Cron (04:00 & 16:00 UTC): leanimt-plus-build → commit snapshots → upload to `snapshot-latest` release → `leanimt-plus-build --post-root` posts roots on-chain (Arbitrum Sepolia)
 
 ## Data Scale
 

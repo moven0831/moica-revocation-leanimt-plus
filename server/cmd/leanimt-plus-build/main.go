@@ -15,7 +15,7 @@ import (
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/chain"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/config"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/crl"
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/snapshot"
 )
 
@@ -56,7 +56,7 @@ func main() {
 		{ID: "g3", URL: cfg.CRLG3URL},
 	}
 
-	hasher := leanimt.NewPoseidonHasher()
+	hasher := leanimt_plus.NewPoseidonHasher()
 	anyChanged := false
 
 	for _, iss := range issuers {
@@ -80,7 +80,7 @@ func main() {
 		log.Printf("[%s] %d unique sorted serials", iss.ID, len(serials))
 
 		buildStart := time.Now()
-		tree := leanimt.New(hasher)
+		tree := leanimt_plus.New(hasher)
 		if len(serials) > 0 {
 			err = tree.InsertManyWithProgress(serials, 10_000, func(done, total int) {
 				log.Printf("[%s] Inserted %d / %d", iss.ID, done, total)
@@ -249,7 +249,7 @@ func postRootOnChain(cfg *config.Config) {
 }
 
 func convertJSONToBinary(jsonPath string) {
-	hasher := leanimt.NewPoseidonHasher()
+	hasher := leanimt_plus.NewPoseidonHasher()
 
 	log.Printf("Loading JSON snapshot from %s", jsonPath)
 	tree, crlNumber, err := snapshot.ImportFile(hasher, jsonPath)

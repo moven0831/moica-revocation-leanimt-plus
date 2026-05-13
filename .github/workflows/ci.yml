@@ -37,8 +37,8 @@ jobs:
           go-version: "1.24"
       - run: go mod download
       - run: go test ./... -v
-      - run: go build ./cmd/smtserver
-      - run: go build ./cmd/smtbuild
+      - run: go build ./cmd/leanimt-plus-server
+      - run: go build ./cmd/leanimt-plus-build
 
   chain:
     name: On-Chain Relay Tests

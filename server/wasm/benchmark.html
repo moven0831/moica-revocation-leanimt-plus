@@ -94,7 +94,7 @@ if (!('DecompressionStream' in window)) {
 } else {
   const go = new Go();
   const wasmFetchStart = performance.now();
-  WebAssembly.instantiateStreaming(fetch('leanimt.wasm'), go.importObject).then(result => {
+  WebAssembly.instantiateStreaming(fetch('leanimt-plus.wasm'), go.importObject).then(result => {
     const wasmLoadTime = performance.now() - wasmFetchStart;
     go.run(result.instance);
     log(`WASM loaded in ${formatMs(wasmLoadTime)}`);
@@ -105,7 +105,7 @@ if (!('DecompressionStream' in window)) {
     statusEl.classList.add('error');
   });
 
-  fetch('leanimt.wasm', { method: 'HEAD' }).then(r => {
+  fetch('leanimt-plus.wasm', { method: 'HEAD' }).then(r => {
     const size = r.headers.get('content-length');
     if (size) addResult('WASM binary size', formatBytes(parseInt(size)));
   }).catch(() => {});
@@ -158,16 +158,16 @@ async function runBenchmark() {
 
     log('Loading snapshot into WASM...');
     const loadStart = performance.now();
-    const info = leanimtLoadSnapshot(decompressedBytes);
+    const info = leanimtPlusLoadSnapshot(decompressedBytes);
     const loadTime = performance.now() - loadStart;
     addResult('Tree load time', formatMs(loadTime));
     addResult('Tree size (user leaves)', info.size.toLocaleString());
     log(`Loaded in ${formatMs(loadTime)}`);
 
-    const wasmRoot = leanimtRoot();
+    const wasmRoot = leanimtPlusRoot();
     log(`Root: ${wasmRoot.slice(0, 16)}...`);
 
-    const memJSON = leanimtGetMemStats();
+    const memJSON = leanimtPlusGetMemStats();
     const mem = JSON.parse(memJSON);
     addResult('WASM heap in use', formatBytes(mem.heapInuse));
     addResult('WASM heap alloc', formatBytes(mem.heapAlloc));
@@ -177,7 +177,7 @@ async function runBenchmark() {
 
     log(`Generating proof for ${testKey}...`);
     const proofStart = performance.now();
-    const proofJSON = leanimtGenerateProof(testKey);
+    const proofJSON = leanimtPlusGenerateProof(testKey);
     const proofTime = performance.now() - proofStart;
     addResult('Proof generation time', formatMs(proofTime));
     log(`Proof generated in ${formatMs(proofTime)}`);
@@ -187,7 +187,7 @@ async function runBenchmark() {
     addResult('Siblings count', proof.siblings.length);
 
     const verifyStart = performance.now();
-    const valid = leanimtVerifyProof(proofJSON);
+    const valid = leanimtPlusVerifyProof(proofJSON);
     const verifyTime = performance.now() - verifyStart;
     addResult('Proof verification time', formatMs(verifyTime));
     addResult('Proof valid', valid ? 'YES' : 'NO');

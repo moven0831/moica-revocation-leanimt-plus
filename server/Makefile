@@ -1,23 +1,23 @@
 .PHONY: build build-cli build-wasm build-binary test test-integration proto clean
 
 build:
-	go build -o bin/smtserver ./cmd/smtserver
+	go build -o bin/leanimt-plus-server ./cmd/leanimt-plus-server
 
 build-cli:
-	go build -o bin/smtbuild ./cmd/smtbuild
+	go build -o bin/leanimt-plus-build ./cmd/leanimt-plus-build
 
 build-wasm:
-	GOOS=js GOARCH=wasm go build -o wasm/leanimt.wasm ./wasm/
+	GOOS=js GOARCH=wasm go build -o wasm/leanimt-plus.wasm ./wasm/
 	@WASM_JS="$$(go env GOROOT)/lib/wasm/wasm_exec.js"; \
 	if [ ! -f "$$WASM_JS" ]; then WASM_JS="$$(go env GOROOT)/misc/wasm/wasm_exec.js"; fi; \
 	cp "$$WASM_JS" wasm/
 
 build-binary: build-cli
-	./bin/smtbuild --binary
+	./bin/leanimt-plus-build --binary
 
 benchmark: build-cli build-wasm
 	@echo "Converting G2 JSON snapshot to binary..."
-	./bin/smtbuild --convert-binary data/g2/tree-snapshot.json.gz
+	./bin/leanimt-plus-build --convert-binary data/g2/tree-snapshot.json.gz
 	cp data/g2/tree-snapshot.bin.gz wasm/
 	@echo ""
 	@echo "=== Ready ==="
@@ -41,4 +41,4 @@ clean:
 	rm -rf bin/
 
 run: build
-	./bin/smtserver
+	./bin/leanimt-plus-server

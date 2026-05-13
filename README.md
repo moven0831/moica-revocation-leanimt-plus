@@ -24,7 +24,7 @@ MOICA CRL (DER)
 
 ```bash
 cd server
-make build    # → bin/smtserver
+make build    # → bin/leanimt-plus-server
 make run      # starts REST + gRPC servers
 
 # tests
@@ -140,7 +140,7 @@ Post roots on-chain manually (reads `root.json` files; skips gracefully if env v
 
 ```bash
 cd server
-./bin/smtbuild --post-root
+./bin/leanimt-plus-build --post-root
 ```
 
 ## Snapshots
@@ -175,7 +175,7 @@ Roots and metadata for each cron run are visible in the [snapshot-latest release
 
 ## Client-Side WASM
 
-A Go WASM module (`leanimt.wasm`) lets clients load the full LeanIMT+ tree and generate proofs entirely in the browser — no server round-trip needed.
+A Go WASM module (`leanimt-plus.wasm`) lets clients load the full LeanIMT+ tree and generate proofs entirely in the browser — no server round-trip needed.
 
 ### WASM API
 
@@ -185,11 +185,11 @@ The module exposes these functions on `globalThis`:
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `leanimtLoadSnapshot` | `(Uint8Array)` → `{size, depth, leafCount}` | Load a decompressed v2 binary snapshot in one call |
-| `leanimtGenerateProof` | `(valueHex)` → `string` | Generate proof JSON for the given value |
-| `leanimtVerifyProof` | `(proofJSON)` → `boolean` | Verify a proof |
-| `leanimtRoot` | `()` → `string` | Current tree root (hex) |
-| `leanimtGetMemStats` | `()` → `string` | Go runtime memory stats as JSON |
+| `leanimtPlusLoadSnapshot` | `(Uint8Array)` → `{size, depth, leafCount}` | Load a decompressed v2 binary snapshot in one call |
+| `leanimtPlusGenerateProof` | `(valueHex)` → `string` | Generate proof JSON for the given value |
+| `leanimtPlusVerifyProof` | `(proofJSON)` → `boolean` | Verify a proof |
+| `leanimtPlusRoot` | `()` → `string` | Current tree root (hex) |
+| `leanimtPlusGetMemStats` | `()` → `string` | Go runtime memory stats as JSON |
 
 The proof JSON matches the REST `ProofResponse` shape (`proofType`, `root`, `value`, `leaf`, `leafIndex`, `siblings`).
 
@@ -222,19 +222,19 @@ value     [32]byte
 nextValue [32]byte
 ```
 
-Build binary snapshots: `cd server && make build-binary` or `./bin/smtbuild --binary`.
+Build binary snapshots: `cd server && make build-binary` or `./bin/leanimt-plus-build --binary`.
 
-Convert an existing JSON snapshot: `./bin/smtbuild --convert-binary data/g2/tree-snapshot.json.gz`.
+Convert an existing JSON snapshot: `./bin/leanimt-plus-build --convert-binary data/g2/tree-snapshot.json.gz`.
 
 ## LeanIMT+ Implementation Notes
 
-- **Reference**: [vplasencia/leanimt-plus](https://github.com/vplasencia/leanimt-plus). The Go port lives in `server/internal/leanimt/`.
+- **Reference**: [vplasencia/leanimt-plus](https://github.com/vplasencia/leanimt-plus). The Go port lives in `server/internal/leanimt_plus/`.
 - **Hash**: Poseidon over the P-256 base field via [`go-poseidon-p256`](https://github.com/zkmopro/go-poseidon-p256). Upstream LeanIMT+ uses Poseidon-BN254, so proofs from this implementation are **not** interoperable with the upstream Circom verifier — we ported the algorithm, not the field.
 - **Leaf commitment**: `H(value, nextValue)`. Leaves form an implicit sorted linked list keyed by `value`; `nextValue` is the immediate right neighbor's value.
 - **Branch**: `H(left, right)`. Unpaired right children are promoted unchanged at each level (no zero-padding).
 - **Sentinel**: the first insert creates `{value: 0, nextValue: smallest}` at index 0. The sentinel is never reported by `IndexOf`, and `0` is rejected as an insertable value.
 - **Depth**: dynamic — `ceil(log2(leafCount))`.
-- **Insert order**: production paths (`smtbuild`, CRL watcher) pre-sort serials and use `InsertManySorted` for O(n) total inserts. The naive `InsertMany` is O(n²) and only used in tests.
+- **Insert order**: production paths (`leanimt-plus-build`, CRL watcher) pre-sort serials and use `InsertManySorted` for O(n) total inserts. The naive `InsertMany` is O(n²) and only used in tests.
 - **Deletion**: not supported. The CRL watcher rebuilds the tree from scratch every poll, so deletions are unnecessary.
 
 ## Data Scale
@@ -251,7 +251,7 @@ For 412k G2 entries, LeanIMT+ depth is `ceil(log2(412k + 1)) = 19`. Membership p
 **`ci.yml`** — runs on push/PR to main:
 
 - Go server: `go test ./...` + build binary
-- WASM: verify `leanimt.wasm` compiles (`GOOS=js GOARCH=wasm`)
+- WASM: verify `leanimt-plus.wasm` compiles (`GOOS=js GOARCH=wasm`)
 - E2E integration: synthetic tree (1024 leaves) — exercises REST + gRPC + proof verification end-to-end without network
 - Contracts: `npx hardhat test` (Node 22)
 
@@ -260,7 +260,7 @@ For 412k G2 entries, LeanIMT+ depth is `ceil(log2(412k + 1)) = 19`. Membership p
 1. Build server binary + WASM module
 2. Fetch CRL, build LeanIMT+, export JSON + binary snapshots (skipped if root unchanged)
 3. Upload snapshots, WASM module, and `wasm_exec.js` to GitHub Release (`snapshot-latest`)
-4. Post root on-chain via `smtbuild --post-root` (Arbitrum Sepolia)
+4. Post root on-chain via `leanimt-plus-build --post-root` (Arbitrum Sepolia)
 
 Required secrets: `RPC_URL`, `RELAYER_PRIVATE_KEY`, `CONTRACT_ADDRESS`. On-chain posting skips gracefully if any are unset.
 
@@ -274,4 +274,4 @@ Required secrets: `RPC_URL`, `RELAYER_PRIVATE_KEY`, `CONTRACT_ADDRESS`. On-chain
 
 ## History
 
-Forked from [`moica-revocation-smt`](https://github.com/moven0831/moica-revocation-smt) in early 2026; the original Sparse Merkle Tree (which was `@zk-kit/smt` wire-compatible) was replaced with LeanIMT+ over Poseidon-P256. The Go binary names `smtserver` and `smtbuild` are kept for backwards-compatible deploy scripts.
+Forked from [`moica-revocation-smt`](https://github.com/moven0831/moica-revocation-smt) in early 2026; the original Sparse Merkle Tree (which was `@zk-kit/smt` wire-compatible) was replaced with LeanIMT+ over Poseidon-P256.

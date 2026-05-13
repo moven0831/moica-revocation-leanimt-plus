@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/manager"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/snapshot"
 )
@@ -21,12 +21,12 @@ type Watcher struct {
 	interval time.Duration
 	issuers  []IssuerConfig
 	mgr      *manager.TreeManager
-	hasher   leanimt.Hasher
+	hasher   leanimt_plus.Hasher
 	dataDir  string
 	wg       sync.WaitGroup
 }
 
-func NewWatcher(interval time.Duration, issuers []IssuerConfig, mgr *manager.TreeManager, hasher leanimt.Hasher, dataDir string) *Watcher {
+func NewWatcher(interval time.Duration, issuers []IssuerConfig, mgr *manager.TreeManager, hasher leanimt_plus.Hasher, dataDir string) *Watcher {
 	return &Watcher{
 		interval: interval,
 		issuers:  issuers,
@@ -87,7 +87,7 @@ func (w *Watcher) fetchAndRebuild(issuer IssuerConfig) error {
 	serials := DedupAndSortSerials(parsed.RevokedSerials)
 	log.Printf("Building LeanIMT+ for %s with %d unique sorted serials", issuer.ID, len(serials))
 
-	tree := leanimt.New(w.hasher)
+	tree := leanimt_plus.New(w.hasher)
 	if len(serials) > 0 {
 		if err := tree.InsertManySorted(serials); err != nil {
 			return err

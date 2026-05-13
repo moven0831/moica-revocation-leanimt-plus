@@ -4,10 +4,9 @@ server/data/**/*.bin.gz
 
 # Go build output
 server/bin/
-server/smtbuild
 
 # WASM build output (kept in GitHub Releases only)
-server/wasm/leanimt.wasm
+server/wasm/leanimt-plus.wasm
 server/wasm/wasm_exec.js
 server/wasm/tree-snapshot.bin.gz
 

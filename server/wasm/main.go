@@ -11,24 +11,24 @@ import (
 	"syscall/js"
 
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/hexenc"
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/snapshot"
 )
 
 var (
-	hasher leanimt.Hasher
-	tree   *leanimt.LeanIMTPlus
+	hasher leanimt_plus.Hasher
+	tree   *leanimt_plus.LeanIMTPlus
 )
 
 func main() {
-	hasher = leanimt.NewPoseidonHasher()
+	hasher = leanimt_plus.NewPoseidonHasher()
 
-	js.Global().Set("leanimtLoadSnapshot", js.FuncOf(loadSnapshot))
-	js.Global().Set("leanimtGenerateProof", js.FuncOf(generateProof))
-	js.Global().Set("leanimtVerifyProof", js.FuncOf(verifyProofJS))
-	js.Global().Set("leanimtGetMemStats", js.FuncOf(getMemStats))
-	js.Global().Set("leanimtRoot", js.FuncOf(rootJS))
-	js.Global().Set("leanimtReady", js.ValueOf(true))
+	js.Global().Set("leanimtPlusLoadSnapshot", js.FuncOf(loadSnapshot))
+	js.Global().Set("leanimtPlusGenerateProof", js.FuncOf(generateProof))
+	js.Global().Set("leanimtPlusVerifyProof", js.FuncOf(verifyProofJS))
+	js.Global().Set("leanimtPlusGetMemStats", js.FuncOf(getMemStats))
+	js.Global().Set("leanimtPlusRoot", js.FuncOf(rootJS))
+	js.Global().Set("leanimtPlusReady", js.ValueOf(true))
 
 	select {}
 }
@@ -60,7 +60,7 @@ func generateProof(_ js.Value, args []js.Value) any {
 		return jsError("generateProof requires (valueHex)")
 	}
 	if tree == nil {
-		return jsError("tree not loaded — call leanimtLoadSnapshot first")
+		return jsError("tree not loaded — call leanimtPlusLoadSnapshot first")
 	}
 
 	valueHex := args[0].String()
@@ -88,7 +88,7 @@ func verifyProofJS(_ js.Value, args []js.Value) any {
 	if err := json.Unmarshal([]byte(args[0].String()), &jp); err != nil {
 		return jsError(fmt.Sprintf("unmarshal proof: %v", err))
 	}
-	return leanimt.VerifyProof(hasher, jsonToProof(&jp))
+	return leanimt_plus.VerifyProof(hasher, jsonToProof(&jp))
 }
 
 func rootJS(_ js.Value, _ []js.Value) any {
@@ -139,7 +139,7 @@ func decodeOrZero(s string) *big.Int {
 	return n
 }
 
-func proofToJSON(p *leanimt.Proof) *jsonProof {
+func proofToJSON(p *leanimt_plus.Proof) *jsonProof {
 	jp := &jsonProof{
 		ProofType: int(p.ProofType),
 		Root:      hexenc.Encode(p.Root),
@@ -151,12 +151,12 @@ func proofToJSON(p *leanimt.Proof) *jsonProof {
 	return jp
 }
 
-func jsonToProof(jp *jsonProof) *leanimt.Proof {
-	p := &leanimt.Proof{
-		ProofType: leanimt.ProofType(jp.ProofType),
+func jsonToProof(jp *jsonProof) *leanimt_plus.Proof {
+	p := &leanimt_plus.Proof{
+		ProofType: leanimt_plus.ProofType(jp.ProofType),
 		Root:      decodeOrZero(jp.Root),
 		Value:     decodeOrZero(jp.Value),
-		Leaf:      leanimt.IndexedLeaf{Value: decodeOrZero(jp.Leaf.Value), NextValue: decodeOrZero(jp.Leaf.NextValue)},
+		Leaf:      leanimt_plus.IndexedLeaf{Value: decodeOrZero(jp.Leaf.Value), NextValue: decodeOrZero(jp.Leaf.NextValue)},
 		LeafIndex: jp.LeafIndex,
 		Siblings:  make([]*big.Int, len(jp.Siblings)),
 	}
