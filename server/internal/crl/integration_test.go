@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 )
 
 const (
@@ -63,8 +63,8 @@ func testCRLIntegration(t *testing.T, name, url string, minSerials int) {
 	t.Logf("[%s] %d unique sorted serials (removed %d duplicates)",
 		name, len(uniqueSerials), len(parsed.RevokedSerials)-len(uniqueSerials))
 
-	hasher := leanimt.NewPoseidonHasher()
-	tree := leanimt.New(hasher)
+	hasher := leanimt_plus.NewPoseidonHasher()
+	tree := leanimt_plus.New(hasher)
 
 	buildStart := time.Now()
 	err = tree.InsertManyWithProgress(uniqueSerials, 10_000, func(done, total int) {
@@ -93,11 +93,11 @@ func testCRLIntegration(t *testing.T, name, url string, minSerials int) {
 	}
 	t.Logf("[%s] Membership proof generated in %v", name, time.Since(proofStart))
 
-	if memberProof.ProofType != leanimt.ProofMembership {
+	if memberProof.ProofType != leanimt_plus.ProofMembership {
 		t.Fatalf("[%s] Expected membership proof for 0x%s, got %d",
 			name, memberKey.Text(16), memberProof.ProofType)
 	}
-	if !leanimt.VerifyProof(hasher, memberProof) {
+	if !leanimt_plus.VerifyProof(hasher, memberProof) {
 		t.Fatalf("[%s] Membership proof verification failed for 0x%s", name, memberKey.Text(16))
 	}
 
@@ -106,10 +106,10 @@ func testCRLIntegration(t *testing.T, name, url string, minSerials int) {
 	if err != nil {
 		t.Fatalf("[%s] GenerateProof non-member failed: %v", name, err)
 	}
-	if nonMemberProof.ProofType != leanimt.ProofNonMembership {
+	if nonMemberProof.ProofType != leanimt_plus.ProofNonMembership {
 		t.Fatalf("[%s] Expected non-membership proof, got %d", name, nonMemberProof.ProofType)
 	}
-	if !leanimt.VerifyProof(hasher, nonMemberProof) {
+	if !leanimt_plus.VerifyProof(hasher, nonMemberProof) {
 		t.Fatalf("[%s] Non-membership proof verification failed", name)
 	}
 

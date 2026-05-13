@@ -22,7 +22,7 @@ import (
 
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/api/grpcapi"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/api/rest"
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/manager"
 	pb "github.com/moven0831/moica-revocation-leanimt-plus/server/pkg/proto/revocation"
 )
@@ -37,19 +37,19 @@ var (
 	testRouter     http.Handler
 	testGRPCClient pb.RevocationProofServiceClient
 	grpcCleanup    func()
-	hasher         leanimt.Hasher
+	hasher         leanimt_plus.Hasher
 	memberSerials  []string
 )
 
 func TestMain(m *testing.M) {
-	hasher = leanimt.NewPoseidonHasher()
+	hasher = leanimt_plus.NewPoseidonHasher()
 
 	tree, serials := buildSyntheticTree(syntheticN)
 	memberSerials = pickMembers(serials, 10)
 
 	mgr := manager.New(hasher)
 	mgr.SetTree(issuerID, tree, 100)
-	mgr.SetTree("g3", leanimt.New(hasher), 0)
+	mgr.SetTree("g3", leanimt_plus.New(hasher), 0)
 
 	testRouter = rest.NewHandler(mgr).Router()
 
@@ -81,7 +81,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func buildSyntheticTree(n int) (*leanimt.LeanIMTPlus, []*big.Int) {
+func buildSyntheticTree(n int) (*leanimt_plus.LeanIMTPlus, []*big.Int) {
 	r := rand.New(rand.NewSource(int64(n) * 31))
 	seen := make(map[int64]struct{}, n)
 	values := make([]*big.Int, 0, n)
@@ -95,7 +95,7 @@ func buildSyntheticTree(n int) (*leanimt.LeanIMTPlus, []*big.Int) {
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i].Cmp(values[j]) < 0 })
 
-	tree := leanimt.New(leanimt.NewPoseidonHasher())
+	tree := leanimt_plus.New(leanimt_plus.NewPoseidonHasher())
 	if err := tree.InsertManySorted(values); err != nil {
 		panic(err)
 	}
@@ -165,8 +165,8 @@ func TestIntegrationRESTMembershipProof(t *testing.T) {
 		t.Run(serial, func(t *testing.T) {
 			resp := getProofResponse(t, issuerID, serial)
 
-			if resp.ProofType != int(leanimt.ProofMembership) {
-				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofMembership)
+			if resp.ProofType != int(leanimt_plus.ProofMembership) {
+				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt_plus.ProofMembership)
 			}
 			if resp.Leaf.Value != resp.Value {
 				t.Errorf("leaf.value=%s, value=%s — must match for membership", resp.Leaf.Value, resp.Value)
@@ -193,8 +193,8 @@ func TestIntegrationRESTNonMembershipProof(t *testing.T) {
 		t.Run(serial, func(t *testing.T) {
 			resp := getProofResponse(t, issuerID, serial)
 
-			if resp.ProofType != int(leanimt.ProofNonMembership) {
-				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofNonMembership)
+			if resp.ProofType != int(leanimt_plus.ProofNonMembership) {
+				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt_plus.ProofNonMembership)
 			}
 			leafVal := parseHex(t, resp.Leaf.Value)
 			leafNext := parseHex(t, resp.Leaf.NextValue)
@@ -254,8 +254,8 @@ func TestIntegrationGRPCMembershipProof(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetProof: %v", err)
 			}
-			if resp.ProofType != uint32(leanimt.ProofMembership) {
-				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofMembership)
+			if resp.ProofType != uint32(leanimt_plus.ProofMembership) {
+				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt_plus.ProofMembership)
 			}
 			if resp.Leaf.Value != resp.Value {
 				t.Errorf("leaf.value=%s, value=%s — must match for membership", resp.Leaf.Value, resp.Value)
@@ -277,8 +277,8 @@ func TestIntegrationGRPCNonMembershipProof(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetProof: %v", err)
 			}
-			if resp.ProofType != uint32(leanimt.ProofNonMembership) {
-				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofNonMembership)
+			if resp.ProofType != uint32(leanimt_plus.ProofNonMembership) {
+				t.Fatalf("proofType: got %d, want %d", resp.ProofType, leanimt_plus.ProofNonMembership)
 			}
 		})
 	}

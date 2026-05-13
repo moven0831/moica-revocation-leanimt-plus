@@ -18,7 +18,7 @@ import (
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/api/rest"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/config"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/crl"
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/manager"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/snapshot"
 	pb "github.com/moven0831/moica-revocation-leanimt-plus/server/pkg/proto/revocation"
@@ -26,7 +26,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	hasher := leanimt.NewPoseidonHasher()
+	hasher := leanimt_plus.NewPoseidonHasher()
 	mgr := manager.New(hasher)
 
 	// Try loading snapshots for fast startup

@@ -1,4 +1,4 @@
-package leanimt
+package leanimt_plus
 
 import (
 	"errors"

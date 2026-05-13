@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 )
 
 func bigsFromHex(t *testing.T, hexes ...string) []*big.Int {
@@ -25,10 +25,10 @@ func bigsFromHex(t *testing.T, hexes ...string) []*big.Int {
 	return out
 }
 
-func buildLeanTree(t *testing.T) *leanimt.LeanIMTPlus {
+func buildLeanTree(t *testing.T) *leanimt_plus.LeanIMTPlus {
 	t.Helper()
-	h := leanimt.NewPoseidonHasher()
-	tree := leanimt.New(h)
+	h := leanimt_plus.NewPoseidonHasher()
+	tree := leanimt_plus.New(h)
 	serials := bigsFromHex(t,
 		"100048210DD2DF2E128096A9282B5EC5",
 		"200048210DD2DF2E128096A9282B5EC5",
@@ -41,7 +41,7 @@ func buildLeanTree(t *testing.T) *leanimt.LeanIMTPlus {
 }
 
 func TestSnapshotRoundTrip(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	tree := buildLeanTree(t)
 
 	originalRoot := tree.Root()
@@ -72,10 +72,10 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if proof.ProofType != leanimt.ProofMembership {
+	if proof.ProofType != leanimt_plus.ProofMembership {
 		t.Fatal("expected membership proof")
 	}
-	if !leanimt.VerifyProof(h, proof) {
+	if !leanimt_plus.VerifyProof(h, proof) {
 		t.Fatal("proof verification failed on restored tree")
 	}
 
@@ -84,16 +84,16 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nonProof.ProofType != leanimt.ProofNonMembership {
+	if nonProof.ProofType != leanimt_plus.ProofNonMembership {
 		t.Fatal("expected non-membership proof")
 	}
-	if !leanimt.VerifyProof(h, nonProof) {
+	if !leanimt_plus.VerifyProof(h, nonProof) {
 		t.Fatal("non-membership verification failed")
 	}
 }
 
 func TestExportFileRoundTrip(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	tree := buildLeanTree(t)
 	originalRoot := tree.Root()
 	var crlNum uint64 = 99
@@ -127,8 +127,8 @@ func TestExportFileRoundTrip(t *testing.T) {
 }
 
 func TestSnapshotEmpty(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
-	tree := leanimt.New(h)
+	h := leanimt_plus.NewPoseidonHasher()
+	tree := leanimt_plus.New(h)
 
 	var buf bytes.Buffer
 	if err := Export(tree, 0, &buf); err != nil {
@@ -147,8 +147,8 @@ func TestSnapshotEmpty(t *testing.T) {
 }
 
 func TestSnapshotCRLNumber(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
-	tree := leanimt.New(h)
+	h := leanimt_plus.NewPoseidonHasher()
+	tree := leanimt_plus.New(h)
 	if err := tree.Insert(big.NewInt(0xABCDEF)); err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestSnapshotCRLNumber(t *testing.T) {
 }
 
 func TestSnapshotRejectsWrongVersion(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	v1 := map[string]any{"version": 1, "root": "0x0", "nodes": []any{}}
 	body, _ := json.Marshal(v1)
 	var buf bytes.Buffer

@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 )
 
 type TreeEntry struct {
-	Tree      *leanimt.LeanIMTPlus
+	Tree      *leanimt_plus.LeanIMTPlus
 	CRLNumber uint64
 	LoadedAt  time.Time
 }
@@ -18,17 +18,17 @@ type TreeEntry struct {
 type TreeManager struct {
 	mu     sync.RWMutex
 	trees  map[string]*TreeEntry
-	hasher leanimt.Hasher
+	hasher leanimt_plus.Hasher
 }
 
-func New(h leanimt.Hasher) *TreeManager {
+func New(h leanimt_plus.Hasher) *TreeManager {
 	return &TreeManager{
 		trees:  make(map[string]*TreeEntry),
 		hasher: h,
 	}
 }
 
-func (m *TreeManager) Hasher() leanimt.Hasher {
+func (m *TreeManager) Hasher() leanimt_plus.Hasher {
 	return m.hasher
 }
 
@@ -42,7 +42,7 @@ func (m *TreeManager) GetTree(issuerID string) (*TreeEntry, error) {
 	return entry, nil
 }
 
-func (m *TreeManager) SetTree(issuerID string, tree *leanimt.LeanIMTPlus, crlNumber uint64) {
+func (m *TreeManager) SetTree(issuerID string, tree *leanimt_plus.LeanIMTPlus, crlNumber uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.trees[issuerID] = &TreeEntry{
@@ -52,7 +52,7 @@ func (m *TreeManager) SetTree(issuerID string, tree *leanimt.LeanIMTPlus, crlNum
 	}
 }
 
-func (m *TreeManager) GetProof(issuerID string, serialNumber *big.Int) (*leanimt.Proof, error) {
+func (m *TreeManager) GetProof(issuerID string, serialNumber *big.Int) (*leanimt_plus.Proof, error) {
 	m.mu.RLock()
 	entry, ok := m.trees[issuerID]
 	m.mu.RUnlock()

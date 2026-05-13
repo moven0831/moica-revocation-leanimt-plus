@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 )
 
 func TestBinaryRoundTrip(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	tree := buildLeanTree(t)
 	originalRoot := tree.Root()
 	originalDepth := tree.Depth()
@@ -45,17 +45,17 @@ func TestBinaryRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if proof.ProofType != leanimt.ProofMembership {
+	if proof.ProofType != leanimt_plus.ProofMembership {
 		t.Fatal("expected membership")
 	}
-	if !leanimt.VerifyProof(h, proof) {
+	if !leanimt_plus.VerifyProof(h, proof) {
 		t.Fatal("verify failed")
 	}
 }
 
 func TestBinaryEmptyTree(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
-	tree := leanimt.New(h)
+	h := leanimt_plus.NewPoseidonHasher()
+	tree := leanimt_plus.New(h)
 
 	var buf bytes.Buffer
 	if err := ExportBinary(tree, 0, &buf); err != nil {
@@ -74,7 +74,7 @@ func TestBinaryEmptyTree(t *testing.T) {
 }
 
 func TestBinaryCrossFormat(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	tree := buildLeanTree(t)
 
 	var jsonBuf bytes.Buffer
@@ -108,7 +108,7 @@ func TestBinaryCrossFormat(t *testing.T) {
 }
 
 func TestBinaryTruncated(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	tree := buildLeanTree(t)
 	var buf bytes.Buffer
 	if err := ExportBinary(tree, 0, &buf); err != nil {
@@ -121,7 +121,7 @@ func TestBinaryTruncated(t *testing.T) {
 }
 
 func TestBinaryInvalidMagic(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	var buf [BinaryHeader]byte
 	binary.BigEndian.PutUint16(buf[0:2], 0xDEAD)
 	binary.BigEndian.PutUint16(buf[2:4], BinaryVersion)
@@ -131,7 +131,7 @@ func TestBinaryInvalidMagic(t *testing.T) {
 }
 
 func TestBinaryUnknownVersion(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	var buf [BinaryHeader]byte
 	binary.BigEndian.PutUint16(buf[0:2], BinaryMagic)
 	binary.BigEndian.PutUint16(buf[2:4], 99)
@@ -141,7 +141,7 @@ func TestBinaryUnknownVersion(t *testing.T) {
 }
 
 func TestBinaryFileRoundTrip(t *testing.T) {
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	tree := buildLeanTree(t)
 	dir := t.TempDir()
 

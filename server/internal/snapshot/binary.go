@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 )
 
 const (
@@ -34,7 +34,7 @@ const (
 //	LEAVES (leafCount of them, includes sentinel):
 //	  value       [32]byte
 //	  nextValue   [32]byte
-func ExportBinary(tree *leanimt.LeanIMTPlus, crlNumber uint64, w io.Writer) error {
+func ExportBinary(tree *leanimt_plus.LeanIMTPlus, crlNumber uint64, w io.Writer) error {
 	nodes, leaves := tree.ExportState()
 
 	var hdr [BinaryHeader]byte
@@ -84,7 +84,7 @@ func ExportBinary(tree *leanimt.LeanIMTPlus, crlNumber uint64, w io.Writer) erro
 	return nil
 }
 
-func ImportBinary(h leanimt.Hasher, r io.Reader) (*leanimt.LeanIMTPlus, uint64, error) {
+func ImportBinary(h leanimt_plus.Hasher, r io.Reader) (*leanimt_plus.LeanIMTPlus, uint64, error) {
 	var hdr [BinaryHeader]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return nil, 0, fmt.Errorf("read header: %w", err)
@@ -125,7 +125,7 @@ func ImportBinary(h leanimt.Hasher, r io.Reader) (*leanimt.LeanIMTPlus, uint64, 
 		nodes[lvl] = level
 	}
 
-	leaves := make([]leanimt.IndexedLeaf, leafCount)
+	leaves := make([]leanimt_plus.IndexedLeaf, leafCount)
 	var valBuf, nextBuf [32]byte
 	for i := 0; i < leafCount; i++ {
 		if _, err := io.ReadFull(r, valBuf[:]); err != nil {
@@ -134,13 +134,13 @@ func ImportBinary(h leanimt.Hasher, r io.Reader) (*leanimt.LeanIMTPlus, uint64, 
 		if _, err := io.ReadFull(r, nextBuf[:]); err != nil {
 			return nil, 0, fmt.Errorf("read leaf %d nextValue: %w", i, err)
 		}
-		leaves[i] = leanimt.IndexedLeaf{
+		leaves[i] = leanimt_plus.IndexedLeaf{
 			Value:     new(big.Int).SetBytes(valBuf[:]),
 			NextValue: new(big.Int).SetBytes(nextBuf[:]),
 		}
 	}
 
-	tree := leanimt.New(h)
+	tree := leanimt_plus.New(h)
 	if leafCount > 0 {
 		if err := tree.ImportState(nodes, leaves); err != nil {
 			return nil, 0, fmt.Errorf("import state: %w", err)
@@ -149,7 +149,7 @@ func ImportBinary(h leanimt.Hasher, r io.Reader) (*leanimt.LeanIMTPlus, uint64, 
 	return tree, crlNumber, nil
 }
 
-func ExportBinaryFile(tree *leanimt.LeanIMTPlus, crlNumber uint64, path string) error {
+func ExportBinaryFile(tree *leanimt_plus.LeanIMTPlus, crlNumber uint64, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
@@ -192,7 +192,7 @@ func ExportBinaryFile(tree *leanimt.LeanIMTPlus, crlNumber uint64, path string) 
 	return nil
 }
 
-func ImportBinaryFile(h leanimt.Hasher, path string) (*leanimt.LeanIMTPlus, uint64, error) {
+func ImportBinaryFile(h leanimt_plus.Hasher, path string) (*leanimt_plus.LeanIMTPlus, uint64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, err

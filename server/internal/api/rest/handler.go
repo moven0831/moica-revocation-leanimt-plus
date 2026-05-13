@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/hexenc"
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/manager"
 )
 
@@ -77,7 +77,7 @@ func (h *Handler) getProof(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if strings.Contains(err.Error(), "unknown issuer") {
 			http.Error(w, `{"error":"unknown issuer"}`, http.StatusNotFound)
-		} else if err == leanimt.ErrEmptyTree {
+		} else if err == leanimt_plus.ErrEmptyTree {
 			http.Error(w, `{"error":"tree is empty"}`, http.StatusServiceUnavailable)
 		} else {
 			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
@@ -113,10 +113,10 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// VerifyProofFromResponse reconstructs a leanimt.Proof from the wire response
+// VerifyProofFromResponse reconstructs a leanimt_plus.Proof from the wire response
 // and runs full verification. Shared with the gRPC client and external
 // integration tests so the wire-shape parsing lives in one place.
-func VerifyProofFromResponse(h leanimt.Hasher, resp *ProofResponse) (bool, error) {
+func VerifyProofFromResponse(h leanimt_plus.Hasher, resp *ProofResponse) (bool, error) {
 	root, err := hexenc.Decode(resp.Root)
 	if err != nil {
 		return false, err
@@ -142,13 +142,13 @@ func VerifyProofFromResponse(h leanimt.Hasher, resp *ProofResponse) (bool, error
 		siblings[i] = n
 	}
 
-	p := &leanimt.Proof{
-		ProofType: leanimt.ProofType(resp.ProofType),
+	p := &leanimt_plus.Proof{
+		ProofType: leanimt_plus.ProofType(resp.ProofType),
 		Root:      root,
 		Value:     value,
-		Leaf:      leanimt.IndexedLeaf{Value: leafVal, NextValue: leafNext},
+		Leaf:      leanimt_plus.IndexedLeaf{Value: leafVal, NextValue: leafNext},
 		LeafIndex: resp.LeafIndex,
 		Siblings:  siblings,
 	}
-	return leanimt.VerifyProof(h, p), nil
+	return leanimt_plus.VerifyProof(h, p), nil
 }

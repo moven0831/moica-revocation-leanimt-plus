@@ -7,15 +7,15 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt"
+	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/leanimt_plus"
 	"github.com/moven0831/moica-revocation-leanimt-plus/server/internal/manager"
 )
 
 func setupTestServer() (*Handler, *manager.TreeManager) {
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	mgr := manager.New(h)
 
-	tree := leanimt.New(h)
+	tree := leanimt_plus.New(h)
 	serial, _ := new(big.Int).SetString("100048210DD2DF2E128096A9282B5EC5", 16)
 	if err := tree.Insert(serial); err != nil {
 		panic(err)
@@ -43,8 +43,8 @@ func TestGetProofMembership(t *testing.T) {
 		t.Fatal("json decode:", err)
 	}
 
-	if resp.ProofType != int(leanimt.ProofMembership) {
-		t.Errorf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofMembership)
+	if resp.ProofType != int(leanimt_plus.ProofMembership) {
+		t.Errorf("proofType: got %d, want %d", resp.ProofType, leanimt_plus.ProofMembership)
 	}
 	if resp.IssuerID != "g2" {
 		t.Errorf("issuerId: got %s, want g2", resp.IssuerID)
@@ -53,7 +53,7 @@ func TestGetProofMembership(t *testing.T) {
 		t.Errorf("leaf.value=%s, value=%s — should match for membership", resp.Leaf.Value, resp.Value)
 	}
 
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	ok, err := VerifyProofFromResponse(h, &resp)
 	if err != nil {
 		t.Fatal(err)
@@ -78,11 +78,11 @@ func TestGetProofNonMembership(t *testing.T) {
 	var resp ProofResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	if resp.ProofType != int(leanimt.ProofNonMembership) {
-		t.Errorf("proofType: got %d, want %d", resp.ProofType, leanimt.ProofNonMembership)
+	if resp.ProofType != int(leanimt_plus.ProofNonMembership) {
+		t.Errorf("proofType: got %d, want %d", resp.ProofType, leanimt_plus.ProofNonMembership)
 	}
 
-	h := leanimt.NewPoseidonHasher()
+	h := leanimt_plus.NewPoseidonHasher()
 	ok, err := VerifyProofFromResponse(h, &resp)
 	if err != nil {
 		t.Fatal(err)
