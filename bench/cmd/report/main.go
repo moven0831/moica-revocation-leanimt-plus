@@ -483,6 +483,24 @@ func (c *ctx) header() {
 	c.wf("Reproduce: `make bench-real`. See [bench/README.md](README.md) for the env-var contract.\n\n")
 }
 
+func (c *ctx) sectionMethodology() {
+	c.wf("## Methodology\n\n")
+	c.wf("Both impls benchmark on a single fetch of G2 + G3 CRL DERs staged in `bench/.cache/` (path passed via `MOICA_BENCH_DER_DIR`); the benches refuse to run if it's unset, so neither side falls back to live HTTP. Each repo parses the same DERs, dedupes and sorts the revoked serials, then runs `go test -bench` (`-count=3` for fast benches, `-benchtime=3x` for build / hash-count).\n\n")
+	c.wf("Proof gen and verify share a fixed query set of `K=%d` serials per dataset, drawn with seed `42` — membership picks from revoked serials, non-membership picks distinct values guaranteed absent. Both repos consume the same `(seed, K)`, so the workload is bit-identical.\n\n", 1024)
+
+	c.wf("## Metric definitions\n\n")
+	c.wf("| Metric | Definition |\n")
+	c.wf("|---|---|\n")
+	c.wf("| Build time | `ns/op` for `InsertManySorted` (LeanIMT+) / `BatchAdd(value=1)` (SMT) over the full sorted serial list. |\n")
+	c.wf("| Proof gen / verify time | `ns/op` averaged across the 1024-query set. |\n")
+	c.wf("| siblings/op | Mean siblings array length per proof. LeanIMT+ varies (unpaired-right levels contribute no entry); SMT is fixed at `depth=128`. |\n")
+	c.wf("| proofBytes/op | `len(json.Marshal(proof))`. Wire formats differ across repos — compare orders of magnitude, not exact bytes. |\n")
+	c.wf("| allocs/op, B/op | `b.ReportAllocs()` allocations and bytes per op. |\n")
+	c.wf("| Hash counts | Poseidon-P256 `Hash2` / `Hash3` calls per op, captured in dedicated `HashCount_*` benches that wrap the hasher with an atomic counter (timing benches use the plain hasher to avoid counter overhead). |\n")
+	c.wf("| Snapshot size | `os.Stat` of the gzipped (`gz`) and uncompressed (`raw`) file from `snapshot.ExportFile`. SMT additionally exports `ExportBinary` (`bin.gz`). |\n")
+	c.wf("| Tree shape | Leaves include the LeanIMT+ sentinel at index 0, so `leaves = serials + 1`. Depth is `ceil(log2(leaves))` for LeanIMT+ and fixed at 128 for SMT. |\n\n")
+}
+
 func (c *ctx) footer() {
 	c.wf("---\n\n")
 	c.wf("### Notes\n\n")
@@ -528,6 +546,7 @@ func main() {
 
 	c := &ctx{lean: lean, smt: smt, out: &strings.Builder{}}
 	c.header()
+	c.sectionMethodology()
 	c.sectionBuild()
 	c.sectionProofGen()
 	c.sectionVerify()
