@@ -250,6 +250,25 @@ For 412k G2 entries, LeanIMT+ depth is `ceil(log2(412k + 1)) = 19`. Membership p
 
 A reproducible side-by-side benchmark of LeanIMT+ against the predecessor [`moica-revocation-smt`](https://github.com/moven0831/moica-revocation-smt) (fixed-depth-128 SMT, `@zk-kit/smt` wire-compatible) lives in [`bench/`](bench/). It runs both impls against the **same live MOICA G2 + G3 CRL DERs** and reports build time, proof gen + verify time, proof size, snapshot size on disk, memory, and Poseidon `Hash2`/`Hash3` call counts.
 
+### Headline results
+
+Full report: [`bench/RESULTS.md`](bench/RESULTS.md) (generated 2026-05-14 on darwin/arm64, 8 CPU).
+
+| Metric | Dataset | LeanIMT+ | SMT | Ratio |
+|---|---|---|---|---|
+| Build full tree | G2 (~394k leaves) | **176.18 s** | 3209.77 s | **18.22x faster** |
+| Build full tree | G3 (~120k leaves) | **49.29 s** | 881.83 s | **17.89x faster** |
+| Poseidon calls (build) | G2 | **787,827** | 14,667,805 | **18.6x fewer** |
+| Poseidon calls (build) | G3 | **239,063** | 4,039,104 | **16.9x fewer** |
+| Snapshot size (json.gz) | G2 | **34.06 MB** | 73.00 MB | **2.14x smaller** |
+| Snapshot size (json.gz) | G3 | **10.37 MB** | 22.14 MB | **2.14x smaller** |
+| Tree depth | G2 | **19** | 128 | dynamic vs fixed |
+| Tree depth | G3 | **17** | 128 | dynamic vs fixed |
+| Verify proof | G2 | **4.23 ms** | 4.37 ms | 1.03x faster |
+| Verify proof | G3 | **3.77–3.80 ms** | 4.02–4.40 ms | 1.06–1.17x faster |
+
+**Tradeoff — proof generation is slower in this implementation.** SMT generates proofs in microseconds (5–7 µs) because it indexes leaves by key; LeanIMT+ proof gen here is millisecond-scale (650 µs – 18 ms) since non-membership lookups walk the sorted leaf list. Verification cost on the consumer side is similar across both. See [`bench/RESULTS.md`](bench/RESULTS.md) for the full proof gen/verify and hash-count tables.
+
 ```bash
 # 1. Clone the SMT repo as a sibling (one-time).
 git clone https://github.com/moven0831/moica-revocation-smt ../moica-revocation-smt
