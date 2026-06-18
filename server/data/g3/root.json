@@ -1,8 +1,8 @@
 {
-  "root": "0x9c987fddfa82206567150f529566cba3797c11501e92f4257ece1b3c317cca3d",
-  "size": 128954,
-  "leafCount": 128955,
+  "root": "0xc62241ebc46e0d91462b21de9b23f5601c13b6968a7a08c5e082e81bd8692a1b",
+  "size": 128830,
+  "leafCount": 128831,
   "depth": 17,
-  "crlNumber": "2026061723",
-  "timestamp": "2026-06-17T17:10:36Z"
+  "crlNumber": "2026061810",
+  "timestamp": "2026-06-18T05:42:39Z"
 }
